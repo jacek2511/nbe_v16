@@ -142,16 +142,16 @@ class StokerCloudClientV16:
                 data = await response.json(content_type=None)
                 return data if isinstance(data, list) else []
         except: return []
-
-    async def set_param(self, read_key: str, value: float) -> bool:
+    
+    async def set_param(self, write_key: str, value: float) -> bool:
+        """
+        Zapis parametru do StokerCloud v16.
+        write_key MUSI być kluczem zapisu (np. hot_water.temp)
+        """
+    
         if not self.token:
             if not await self._refresh_token():
                 return False
-    
-        write_key = WRITE_KEY_MAP.get(read_key)
-        if not write_key:
-            _LOGGER.error("Parametr NIEZAPISYWALNY: %s", read_key)
-            return False
     
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
     
@@ -161,16 +161,26 @@ class StokerCloudClientV16:
             "value": int(round(value)),
             "token": self.token,
             "user": self.username,
-            "pass": self.password
+            "pass": self.password,
         }
     
-        _LOGGER.warning("ZAPIS → %s (%s)", read_key, write_key)
+        _LOGGER.warning("ZAPIS → %s = %s", write_key, value)
     
-        async with self._session.get(url, params=params, headers=self._headers) as resp:
-            text = await resp.text()
-            _LOGGER.warning("RESP: %s | %s", resp.status, text)
+        try:
+            async with self._session.get(url, params=params, headers=self._headers) as resp:
+                text = await resp.text()
+                _LOGGER.warning("RESP: %s | %s", resp.status, text)
     
-            return resp.status == 200 and '"status":"0"' in text
-
+                return (
+                    resp.status == 200
+                    and (
+                        '"status":"0"' in text
+                        or '"status":0' in text
+                        or "OK" in text.upper()
+                    )
+                )
     
+        except Exception as err:
+            _LOGGER.error("Błąd zapisu: %s", err)
+            return False
         
