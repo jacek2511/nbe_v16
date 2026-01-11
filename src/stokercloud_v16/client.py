@@ -35,21 +35,22 @@ class StokerCloudClientV16:
 
     async def _login_ui(self) -> bool:
         """
-        Logowanie UI – WYMAGANE do zapisu (PHPSESSID + ACL)
+        Login UI dla StokerCloud v16
+        WYMAGANY do zapisu (PHPSESSID na v16.stokercloud.dk)
         """
-        login_url = "https://stokercloud.dk/login.php"
+    
+        login_url = "https://v16.stokercloud.dk/login"
     
         payload = {
             "user": self.username,
             "pass": self.password,
-            "remember": "1",
         }
     
         headers = {
             "User-Agent": self._headers["User-Agent"],
             "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://stokercloud.dk",
-            "Referer": "https://stokercloud.dk/",
+            "Origin": "https://v16.stokercloud.dk",
+            "Referer": "https://v16.stokercloud.dk/login",
         }
     
         try:
@@ -60,16 +61,23 @@ class StokerCloudClientV16:
                     headers=headers,
                     allow_redirects=True,
                 ) as resp:
-                    cookies = self._session.cookie_jar.filter_cookies("https://stokercloud.dk")
+    
+                    cookies = self._session.cookie_jar.filter_cookies(
+                        "https://v16.stokercloud.dk"
+                    )
     
                     _LOGGER.warning("LOGIN UI STATUS: %s", resp.status)
                     _LOGGER.warning("LOGIN UI COOKIES: %s", cookies)
     
-                    # MUSI istnieć PHPSESSID
-                    return "PHPSESSID" in cookies
+                    if "PHPSESSID" in cookies:
+                        _LOGGER.warning("✅ SESJA UI v16 AKTYWNA")
+                        return True
+    
+                    _LOGGER.error("❌ Brak PHPSESSID po loginie v16")
+                    return False
     
         except Exception as err:
-            _LOGGER.error("Błąd loginu UI: %s", err)
+            _LOGGER.error("Błąd loginu UI v16: %s", err)
             return False
     
     async def _refresh_token(self):
