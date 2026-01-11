@@ -109,8 +109,9 @@ class StokerCloudClientV16:
         }
 
         special_cases = {
-            "dhwwanted": ("hotwater", "hot_water.temp"),
-            "-wantedboilertemp": ("boiler", "boiler.temp"),
+            # Poprawione na podstawie Twoich logów z przeglądarki
+            "dhwwanted": ("hot_water.temp", "hot_water.temp"),
+            "-wantedboilertemp": ("boiler.temp", "boiler.temp"), # v16 często dubluje to też dla kotła
         }
 
         if item_id in special_cases:
