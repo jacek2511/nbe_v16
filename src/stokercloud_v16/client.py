@@ -8,13 +8,29 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class StokerCloudClientV16:
+    """
+    StokerCloud v16 client – READ ONLY
+
+    ✔ Odczyt danych (token API)
+    ✖ Zapis parametrów (zablokowany po stronie NBE)
+    """
+
     BASE_URL = "https://stokercloud.dk/"
-    BASE_URL_WRITE = "https://v16.stokercloud.dk/"
 
     MENU_SECTIONS = [
-        "boiler", "hot_water", "regulation", "igniter",
-        "fan", "auger", "oxygen", "cleaning", "hopper",
-        "external", "weather", "manual", "timer"
+        "boiler",
+        "hot_water",
+        "regulation",
+        "igniter",
+        "fan",
+        "auger",
+        "oxygen",
+        "cleaning",
+        "hopper",
+        "external",
+        "weather",
+        "manual",
+        "timer",
     ]
 
     def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
@@ -58,13 +74,15 @@ class StokerCloudClientV16:
 
                     if isinstance(data, dict) and "token" in data:
                         self.token = data["token"]
-                        _LOGGER.warning("TOKEN API OK")
+                        _LOGGER.debug("StokerCloud v16: token API OK")
                         return True
 
-                    _LOGGER.error("Niepoprawna odpowiedź login.php: %s", data)
+                    _LOGGER.error(
+                        "StokerCloud v16: niepoprawna odpowiedź login.php: %s", data
+                    )
 
         except Exception as err:
-            _LOGGER.error("Błąd logowania API: %s", err)
+            _LOGGER.error("StokerCloud v16: błąd logowania API: %s", err)
 
         return False
 
@@ -119,7 +137,7 @@ class StokerCloudClientV16:
                 return parsed
 
         except Exception as err:
-            _LOGGER.error("Błąd fetch_data: %s", err)
+            _LOGGER.error("StokerCloud v16: błąd fetch_data: %s", err)
             return {}
 
     def _parse_response(self, data: Any) -> Dict[str, Any]:
@@ -130,7 +148,7 @@ class StokerCloudClientV16:
             if isinstance(i, dict) and "id" in i
         }
 
-        def flatten_v16(key):
+        def flatten_v16(key: str) -> Dict[str, Any]:
             return {
                 str(i.get("id")): i.get("value")
                 for i in data.get(key, [])
@@ -149,7 +167,7 @@ class StokerCloudClientV16:
             },
         }
 
-    def _safe_float(self, val):
+    def _safe_float(self, val: Any) -> float:
         try:
             return float(str(val).replace(",", "."))
         except Exception:
@@ -170,63 +188,4 @@ class StokerCloudClientV16:
                 return data if isinstance(data, list) else []
         except Exception:
             return []
-
-    # ------------------------------------------------------------------
-    # ZAPIS PARAMETRU – TYLKO TOKEN
-    # ------------------------------------------------------------------
-    async def set_param(self, write_key: str, value: float) -> bool:
-        """
-        Zapis parametru do StokerCloud v16
-        Wymaga:
-        - PHPSESSID (login UI)
-        - token (API)
-        - X-Requested-With
-        """
-    
-        if not self.token:
-            if not await self._refresh_token():
-                return False
-    
-        url = "https://v16.stokercloud.dk/v16bckbeta/dataout2/updatevalue.php"
-    
-        params = {
-            "menu": write_key,
-            "name": write_key,
-            "value": int(round(value)),
-            "token": self.token,
-        }
-    
-        headers = {
-            "User-Agent": self._headers["User-Agent"],
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": "https://v16.stokercloud.dk/",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-        }
-    
-        _LOGGER.warning("ZAPIS → %s = %s", write_key, value)
-    
-        try:
-            async with async_timeout.timeout(15):
-                async with self._session.get(
-                    url,
-                    params=params,
-                    headers=headers,
-                ) as resp:
-    
-                    text = await resp.text()
-                    _LOGGER.warning("RESP: %s | %s", resp.status, text)
-    
-                    return (
-                        resp.status == 200
-                        and (
-                            '"status":"0"' in text
-                            or '"status":0' in text
-                            or "OK" in text.upper()
-                        )
-                    )
-    
-        except Exception as err:
-            _LOGGER.error("Błąd zapisu: %s", err)
-            return False
-
 
