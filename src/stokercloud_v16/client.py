@@ -33,28 +33,71 @@ class StokerCloudClientV16:
             "Connection": "keep-alive"
         }
 
-    async def _refresh_token(self):
-        """KROK 1: Emulacja wejścia na stronę profilu i logowanie."""
-        # Najpierw wchodzimy na stronę użytkownika, żeby "podnieść" sesję PHP
-        profile_url = f"https://stokercloud.dk/v2/user/{self.username}"
-        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
-        
+    async def _login_ui(self) -> bool:
+        """
+        Logowanie UI – WYMAGANE do zapisu (PHPSESSID + ACL)
+        """
+        login_url = "https://stokercloud.dk/login.php"
+    
+        payload = {
+            "user": self.username,
+            "pass": self.password,
+            "remember": "1",
+        }
+    
+        headers = {
+            "User-Agent": self._headers["User-Agent"],
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://stokercloud.dk",
+            "Referer": "https://stokercloud.dk/",
+        }
+    
         try:
             async with async_timeout.timeout(15):
-                # 1. 'Odwiedzamy' profil jak człowiek
-                await self._session.get(profile_url, headers=self._headers)
-                
-                # 2. Logujemy się po token
-                params = {"user": self.username, "pass": self.password}
+                async with self._session.post(
+                    login_url,
+                    data=payload,
+                    headers=headers,
+                    allow_redirects=True,
+                ) as resp:
+                    cookies = self._session.cookie_jar.filter_cookies("https://stokercloud.dk")
+    
+                    _LOGGER.warning("LOGIN UI STATUS: %s", resp.status)
+                    _LOGGER.warning("LOGIN UI COOKIES: %s", cookies)
+    
+                    # MUSI istnieć PHPSESSID
+                    return "PHPSESSID" in cookies
+    
+        except Exception as err:
+            _LOGGER.error("Błąd loginu UI: %s", err)
+            return False
+    
+    async def _refresh_token(self):
+        """
+        1️⃣ Login UI (cookie + ACL → ZAPIS)
+        2️⃣ Login API v16 (token → ODCZYT)
+        """
+    
+        # 🔑 KROK 1: LOGIN UI (KRYTYCZNY)
+        if not await self._login_ui():
+            _LOGGER.error("❌ Brak sesji UI – zapis NIE będzie działał")
+            return False
+    
+        # 🔑 KROK 2: TOKEN API (ODCZYT)
+        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
+        params = {"user": self.username, "pass": self.password}
+    
+        try:
+            async with async_timeout.timeout(15):
                 async with self._session.get(login_url, params=params, headers=self._headers) as response:
                     res_json = await response.json(content_type=None)
-                    if isinstance(res_json, dict) and 'token' in res_json:
-                        self.token = res_json.get('token')
-                        cookies = self._session.cookie_jar.filter_cookies(self.BASE_URL)
-                        _LOGGER.warning("Sesja aktywna. Ciasteczka: %s", list(cookies.keys()))
+                    if isinstance(res_json, dict) and "token" in res_json:
+                        self.token = res_json["token"]
+                        _LOGGER.warning("TOKEN API OK")
                         return True
         except Exception as err:
-            _LOGGER.error("Błąd inicjalizacji sesji: %s", err)
+            _LOGGER.error("Błąd pobierania tokena: %s", err)
+    
         return False
     
     async def _fetch_menu_section(self, section: str) -> Dict[str, Any]:
@@ -130,13 +173,21 @@ class StokerCloudClientV16:
     
     async def set_param(self, write_key: str, value: float) -> bool:
         """
-        Zapis parametru do StokerCloud v16.
-        write_key MUSI być kluczem zapisu (np. hot_water.temp)
+        Zapis parametru – WYMAGA aktywnej sesji UI (PHPSESSID)
+        write_key np. hot_water.temp
         """
     
         if not self.token:
             if not await self._refresh_token():
                 return False
+    
+        # 🔍 Diagnostyka sesji
+        cookies = self._session.cookie_jar.filter_cookies("https://stokercloud.dk")
+        _LOGGER.warning("COOKIES PRZED ZAPISEM: %s", cookies)
+    
+        if "PHPSESSID" not in cookies:
+            _LOGGER.error("❌ Brak PHPSESSID – zapis niemożliwy")
+            return False
     
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
     
@@ -145,27 +196,25 @@ class StokerCloudClientV16:
             "name": write_key,
             "value": int(round(value)),
             "token": self.token,
-            "user": self.username,
-            "pass": self.password,
         }
     
         _LOGGER.warning("ZAPIS → %s = %s", write_key, value)
     
         try:
-            async with self._session.get(url, params=params, headers=self._headers) as resp:
-                text = await resp.text()
-                _LOGGER.warning("RESP: %s | %s", resp.status, text)
+            async with async_timeout.timeout(15):
+                async with self._session.get(url, params=params, headers=self._headers) as resp:
+                    text = await resp.text()
+                    _LOGGER.warning("RESP: %s | %s", resp.status, text)
     
-                return (
-                    resp.status == 200
-                    and (
-                        '"status":"0"' in text
-                        or '"status":0' in text
-                        or "OK" in text.upper()
+                    return (
+                        resp.status == 200
+                        and (
+                            '"status":"0"' in text
+                            or '"status":0' in text
+                            or "OK" in text.upper()
+                        )
                     )
-                )
     
         except Exception as err:
             _LOGGER.error("Błąd zapisu: %s", err)
             return False
-        
