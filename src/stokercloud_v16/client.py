@@ -93,7 +93,7 @@ class StokerCloudClientV16:
             _LOGGER.error("Błąd statystyk %s: %s", query_string, err)
             return []
 
-async def set_param(self, item_id: str, value: float) -> bool:
+    async def set_param(self, item_id: str, value: float) -> bool:
         """Wysyła zmianę parametru zgodnie z logiką menu v16."""
         if not self.token:
             await self._refresh_token()
