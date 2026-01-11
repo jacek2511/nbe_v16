@@ -174,27 +174,28 @@ class StokerCloudClientV16:
     # ZAPIS PARAMETRU – TYLKO TOKEN
     # ------------------------------------------------------------------
     async def set_param(self, write_key: str, value: float) -> bool:
-        if not self.token:
-            if not await self._refresh_token():
-                return False
-
+        """
+        ZAPIS parametru – v16 wymaga user/pass (token NIE DZIAŁA)
+        """
+    
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
-
+    
         params = {
+            "user": self.username,
+            "pass": self.password,
             "menu": write_key,
             "name": write_key,
             "value": int(round(value)),
-            "token": self.token,
         }
-
+    
         _LOGGER.warning("ZAPIS → %s = %s", write_key, value)
-
+    
         try:
             async with async_timeout.timeout(15):
                 async with self._session.get(url, params=params) as resp:
                     text = await resp.text()
                     _LOGGER.warning("RESP: %s | %s", resp.status, text)
-
+    
                     return (
                         resp.status == 200
                         and (
@@ -203,7 +204,8 @@ class StokerCloudClientV16:
                             or "OK" in text.upper()
                         )
                     )
-
+    
         except Exception as err:
             _LOGGER.error("Błąd zapisu: %s", err)
             return False
+
