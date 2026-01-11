@@ -130,7 +130,7 @@ class StokerCloudClientV16:
             await self._refresh_token()
 
         # Adres URL do zapisu danych w wersji v16
-        set_url = f"{self.BASE_URL}v16bckbeta/dataout2/setdata2.php"
+        set_url = f"{self.BASE_URL}v16/dataout2/setdata2.php"
         
         # Przygotowanie danych do wysłania
         # V16 zazwyczaj przyjmuje parametry w formie: id=wartość&token=...
