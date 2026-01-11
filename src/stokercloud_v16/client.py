@@ -5,9 +5,8 @@ from typing import Dict, Any, List
 
 _LOGGER = logging.getLogger(__name__)
 
-class StokerCloudClientV16:
-    """StokerCloud v16 – klient read-only, normalizuje dane."""
 
+class StokerCloudClientV16:
     BASE_URL = "https://stokercloud.dk/v16bckbeta/dataout2/"
 
     MENU_SECTIONS = [
@@ -41,13 +40,12 @@ class StokerCloudClientV16:
         }
 
     async def _refresh_token(self) -> bool:
-        """Pobiera token API."""
         url = f"{self.BASE_URL}login.php"
         params = {"user": self.username, "pass": self.password}
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, params=params, headers=self._headers) as response:
-                    data = await response.json(content_type=None)
+                async with self._session.get(url, params=params, headers=self._headers) as resp:
+                    data = await resp.json(content_type=None)
                     if isinstance(data, dict) and "token" in data:
                         self.token = data["token"]
                         _LOGGER.debug("Token API OK")
@@ -57,14 +55,11 @@ class StokerCloudClientV16:
         return False
 
     async def fetch_data(self) -> Dict[str, Any]:
-        """Pobiera dane główne i menu oraz normalizuje je."""
-        if not self.token and not await self._refresh_token():
-            return {}
+        if not self.token:
+            if not await self._refresh_token():
+                return {}
 
-        raw_main: Dict[str, Any] = {}
-        # ----------------------------
-        # Pobranie controllerdata2.php
-        # ----------------------------
+        # 1) Controllerdata
         try:
             async with async_timeout.timeout(20):
                 async with self._session.get(
@@ -75,10 +70,11 @@ class StokerCloudClientV16:
                     raw_main = await resp.json(content_type=None)
         except Exception as err:
             _LOGGER.error("Błąd fetch controllerdata2: %s", err)
+            raw_main = {}
 
         def normalize_list(key: str) -> dict:
             return {
-                str(item.get("id")): (item.get("value") if item.get("value") != "N/A" else None)
+                str(item.get("id")): item.get("value")
                 for item in raw_main.get(key, [])
                 if isinstance(item, dict) and "id" in item
             }
@@ -102,12 +98,10 @@ class StokerCloudClientV16:
             "metrics": raw_main.get("metrics"),
         }
 
+        # 2) Menu sections (obsługa list, dict, None)
         menus: dict[str, Any] = {}
         for menu in self.MENU_SECTIONS:
             try:
-                if not self.token:
-                    await self._refresh_token()  # upewniamy się, że token jest ważny
-        
                 async with async_timeout.timeout(10):
                     async with self._session.get(
                         f"{self.BASE_URL}getmenudata.php",
@@ -119,33 +113,27 @@ class StokerCloudClientV16:
                         except Exception as parse_err:
                             _LOGGER.error("Nie udało się sparsować JSON dla menu %s: %s", menu, parse_err)
                             menu_data = None
-        
-                        # Obsługa różnych formatów
+
                         if isinstance(menu_data, list):
-                            menus[menu] = {
-                                str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
-                                for i in menu_data if isinstance(i, dict) and "id" in i
-                            }
+                            menus[menu] = {str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
+                                           for i in menu_data if isinstance(i, dict) and "id" in i}
                         elif isinstance(menu_data, dict):
-                            # Jeśli serwer zwraca dict, używamy go bez zmian
                             menus[menu] = {k: (v if v != "N/A" else None) for k, v in menu_data.items()}
-                        elif menu_data is None:
-                            menus[menu] = {}
                         else:
-                            _LOGGER.warning("Menu %s zwróciło nieoczekiwany format: %s", menu, type(menu_data))
                             menus[menu] = {}
-        
+
                         _LOGGER.debug("Menu %s: %s", menu, menus[menu])
-        
+
             except Exception as err:
                 _LOGGER.error("Błąd pobrania menu %s: %s", menu, err)
                 menus[menu] = {}
+
+        data["menus"] = menus
         return data
 
     async def get_consumption(self, query_string: str) -> List[Any]:
         if not self.token:
             return []
-
         try:
             async with async_timeout.timeout(15):
                 async with self._session.get(
@@ -156,9 +144,3 @@ class StokerCloudClientV16:
                     return js if isinstance(js, list) else []
         except Exception:
             return []
-
-    def _safe(self, val: Any) -> float | None:
-        try:
-            return float(str(val).replace(",", "."))
-        except Exception:
-            return None
