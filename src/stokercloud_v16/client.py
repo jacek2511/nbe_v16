@@ -39,7 +39,7 @@ class StokerCloudClientV16:
             raise
 
     async def fetch_data(self, retry=True) -> Dict[str, Any]:
-        """Pobiera wszystkie dane z kontrolera."""
+        """Pobiera wszystkie dane z kontrolera z zabezpieczeniem przed błędnym typem."""
         if not self.token:
             await self._refresh_token()
 
@@ -49,21 +49,57 @@ class StokerCloudClientV16:
         try:
             async with async_timeout.timeout(20):
                 async with self._session.get(data_url, params=params, headers=self._headers) as response:
+                    # 1. Obsługa błędu HTTP 401 (Nieautoryzowany)
                     if response.status == 401 and retry:
+                        _LOGGER.info("Otrzymano 401. Odświeżam token.")
                         self.token = None
                         await self._refresh_token()
                         return await self.fetch_data(retry=False)
                     
-                    raw_data = await response.json(content_type=None)
-                    if not raw_data.get("frontdata") and retry:
-                        self.token = None
-                        return await self.fetch_data(retry=False)
+                    # 2. Pobranie JSON
+                    try:
+                        raw_data = await response.json(content_type=None)
+                    except Exception as json_err:
+                        _LOGGER.error("Niepoprawny JSON: %s", json_err)
+                        if retry:
+                            self.token = None
+                            await self._refresh_token()
+                            return await self.fetch_data(retry=False)
+                        return {}
+
+                    # 3. KLUCZOWA POPRAWKA: Sprawdzenie czy to słownik (dict), a nie lista (list)
+                    if not isinstance(raw_data, dict):
+                        _LOGGER.warning("API zwróciło listę zamiast słownika (prawdopodobnie błąd tokena): %s", raw_data)
+                        if retry:
+                            self.token = None
+                            await self._refresh_token()
+                            return await self.fetch_data(retry=False)
+                        return {}
+                    
+                    # 4. Sprawdzenie czy zawiera kluczowe dane
+                    if "frontdata" not in raw_data:
+                        _LOGGER.warning("JSON nie zawiera 'frontdata'. Ponawiam.")
+                        if retry:
+                            self.token = None
+                            return await self.fetch_data(retry=False)
+                        return {}
                     
                     return self._parse_response(raw_data)
+
         except Exception as err:
             _LOGGER.error("Błąd fetch_data: %s", err)
+            # Jeśli to błąd połączenia, nie rzucamy od razu wyjątku krytycznego, tylko zwracamy puste
+            # Koordynator obsłuży to jako UpdateFailed
+            if retry:
+                 # Ostatnia deska ratunku - próba odnowienia sesji przy błędzie sieci
+                 try:
+                     self.token = None
+                     await self._refresh_token()
+                     return await self.fetch_data(retry=False)
+                 except:
+                     pass
             raise
-
+            
     async def get_consumption(self, query_string: str) -> List[Any]:
         """Pobiera statystyki (naprawa błędu pustej tablicy)."""
         if not self.token:
