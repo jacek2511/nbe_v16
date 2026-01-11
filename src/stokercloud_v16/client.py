@@ -65,13 +65,19 @@ class StokerCloudClientV16:
             raise
 
     async def get_consumption(self, query_string: str) -> List[Any]:
-        """Pobiera statystyki zużycia (wymaga tokena w URL)."""
+        """Pobiera statystyki zużycia z poprawionym formatowaniem okresów."""
         if not self.token:
             await self._refresh_token()
 
-        # Budujemy słownik parametrów z przekazanego stringa (np. 'days=2')
-        query_params = dict(q.split('=') for q in query_string.split('&'))
-        query_params["token"] = self.token
+        # Rozbijamy query_string, np. 'months=1'
+        key, val = query_string.split('=')
+        
+        # Dla miesięcy i lat v16 beta czasem potrzebuje 'months=12' lub 'years=10' 
+        # by zainicjować poprawnie tablicę danych.
+        query_params = {
+            key: val,
+            "token": self.token
+        }
 
         url = f"{self.BASE_URL}v16bckbeta/dataout2/getconsumption.php"
         
@@ -79,21 +85,22 @@ class StokerCloudClientV16:
             async with async_timeout.timeout(15):
                 async with self._session.get(url, params=query_params, headers=self._headers) as response:
                     if response.status == 200:
-                        return await response.json(content_type=None)
-                    _LOGGER.warning("get_consumption zwrócił status: %s", response.status)
+                        json_data = await response.json(content_type=None)
+                        _LOGGER.debug("Statystyki %s: Otrzymano %s serii danych", query_string, len(json_data))
+                        return json_data
                     return []
         except Exception as err:
-            _LOGGER.error("Błąd pobierania statystyk (%s): %s", query_string, err)
+            _LOGGER.error("Błąd statystyk %s: %s", query_string, err)
             return []
 
     async def set_param(self, item_id: str, value: float) -> bool:
-        """Wysyła zmianę parametru (updatevalue.php)."""
+        """Wysyła zmianę parametru z wymuszonym formatem Integer i nagłówkiem AJAX."""
         if not self.token:
             await self._refresh_token()
 
         set_url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Mapowanie techniczne dla v16
+        # Mapowanie menu (bez zmian)
         menu_mapping = {
             "boiler": "boiler", "hot_water": "hotwater", "regulation": "regulation",
             "auger": "hopper", "hopper": "hopper", "weather": "weather",
@@ -104,8 +111,6 @@ class StokerCloudClientV16:
         special_cases = {
             "dhwwanted": ("hotwater", "hot_water.temp"),
             "-wantedboilertemp": ("boiler", "boiler.temp"),
-            "boiler.vacuum": ("fan", "boiler.vacuum"),
-            "boiler.vacuum_low": ("fan", "boiler.vacuum_low")
         }
 
         if item_id in special_cases:
@@ -115,22 +120,31 @@ class StokerCloudClientV16:
             menu = menu_mapping.get(prefix, prefix)
             name = item_id
 
+        # V16 BETA WYMAGA:
+        # 1. Wartości jako całkowite (int)
+        # 2. Często dodatkowego nagłówka sugerującego zapytanie AJAX
         params = {
             "menu": menu,
             "name": name,
             "token": self.token,
-            "value": int(value)
+            "value": int(round(float(value))) # Zaokrąglenie i rzutowanie na int
         }
+
+        headers = self._headers.copy()
+        headers["X-Requested-With"] = "XMLHttpRequest"
 
         try:
             async with async_timeout.timeout(10):
-                async with self._session.get(set_url, params=params, headers=self._headers) as response:
-                    _LOGGER.info("Zmiana parametru: %s na %s (Status: %s)", name, value, response.status)
-                    return response.status == 200
+                async with self._session.get(set_url, params=params, headers=headers) as response:
+                    text_resp = await response.text()
+                    _LOGGER.info("Zapis %s=%s | Status: %s | Odpowiedź: %s", name, value, response.status, text_resp)
+                    
+                    # API v16 często zwraca status 200, ale w treści jest "OK" lub "Error"
+                    return response.status == 200 and "OK" in text_resp.upper()
         except Exception as err:
-            _LOGGER.error("Błąd zapisu parametru %s: %s", item_id, err)
+            _LOGGER.error("Wyjątek podczas zapisu %s: %s", item_id, err)
             return False
-
+    
     def _get_val(self, data_source, item_id):
         val = None
         if isinstance(data_source, list):
