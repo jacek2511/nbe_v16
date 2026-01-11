@@ -9,7 +9,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class StokerCloudClientV16:
     BASE_URL = "https://stokercloud.dk/"
-    BASE_URL_WRITE = "https://v16.stokercloud.dk/
+    BASE_URL_WRITE = "https://v16.stokercloud.dk/"
 
     MENU_SECTIONS = [
         "boiler", "hot_water", "regulation", "igniter",
