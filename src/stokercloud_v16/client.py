@@ -16,6 +16,21 @@ class StokerCloudClientV16:
         "external", "weather", "manual", "timer"
     ]
 
+    WRITE_KEY_MAP = {
+        # CWU
+        "dhwwanted": "hot_water.temp",
+    
+        # KOCIOŁ
+        "-wantedboilertemp": "boiler.temp",
+    
+        # REGULACJA
+        "regulation.max_power": "regulation.max_power",  # UWAGA: tylko jeśli UI faktycznie zapisuje
+        "regulation.min_power": "regulation.min_power",
+    
+        # ZAPŁON
+        "ignition.pellets": "igniter.pellets",
+    }
+    
     def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
         self.username = username
         self.password = password
@@ -128,58 +143,34 @@ class StokerCloudClientV16:
                 return data if isinstance(data, list) else []
         except: return []
 
-    async def set_param(self, param: str, value: float) -> bool:
-        """
-        FINALNA, działająca wersja zapisu StokerCloud v16
-        – zgodna z ruchem z przeglądarki
-        – z wymuszoną autoryzacją user/pass
-        """
-    
+    async def set_param(self, read_key: str, value: float) -> bool:
         if not self.token:
             if not await self._refresh_token():
                 return False
     
+        write_key = WRITE_KEY_MAP.get(read_key)
+        if not write_key:
+            _LOGGER.error("Parametr NIEZAPISYWALNY: %s", read_key)
+            return False
+    
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
     
         params = {
-            "menu": param,          # MUSI być np. hot_water.temp
-            "name": param,
+            "menu": write_key,
+            "name": write_key,
             "value": int(round(value)),
             "token": self.token,
-    
-            # 🔴 KLUCZOWE – bez tego backend odrzuca zapis
             "user": self.username,
             "pass": self.password
         }
     
-        headers = self._headers.copy()
-        headers.update({
-            "Referer": f"https://stokercloud.dk/v2/user/{self.username}",
-            "Accept": "*/*",
-            "X-Requested-With": "XMLHttpRequest"
-        })
+        _LOGGER.warning("ZAPIS → %s (%s)", read_key, write_key)
     
-        _LOGGER.warning("ZAPIS UI → %s = %s", param, value)
+        async with self._session.get(url, params=params, headers=self._headers) as resp:
+            text = await resp.text()
+            _LOGGER.warning("RESP: %s | %s", resp.status, text)
     
-        try:
-            async with self._session.get(url, params=params, headers=headers) as resp:
-                text = await resp.text()
-    
-                _LOGGER.warning("ODPOWIEDŹ: %s | %s", resp.status, text)
-    
-                if resp.status == 200 and (
-                    '"status":"0"' in text
-                    or '"status":0' in text
-                    or "OK" in text.upper()
-                ):
-                    _LOGGER.warning("✅ ZAPIS POWIÓDŁ SIĘ")
-                    return True
-    
-                _LOGGER.error("❌ ZAPIS ODRZUCONY")
-                return False
-    
-        except Exception as err:
-            _LOGGER.error("Błąd zapisu: %s", err)
-            return False
+            return resp.status == 200 and '"status":"0"' in text
+
     
         
