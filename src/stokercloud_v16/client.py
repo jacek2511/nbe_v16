@@ -2,6 +2,7 @@ import aiohttp
 import asyncio
 import async_timeout
 import logging
+import hashlib
 from typing import Dict, Any, List
 
 _LOGGER = logging.getLogger(__name__)
@@ -130,9 +131,9 @@ class StokerCloudClientV16:
         except Exception as err:
             _LOGGER.error("Błąd pobierania zużycia: %s", err)
             return []
-
+            
     async def set_param(self, read_key: str, value: float) -> bool:
-        """Wysyła polecenie zmiany metodą POST (często wymagane przy zapisie w v16)."""
+        """Wersja hybrydowa: parametry w URL + MD5 hasła."""
         if not self.token:
             await self._refresh_token()
         
@@ -144,26 +145,37 @@ class StokerCloudClientV16:
         menu, name = mapping.get(read_key, (read_key.split('.')[0], read_key))
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Dane wysyłane w ciele zapytania (POST)
-        payload = {
+        # Generujemy MD5 hasła (wiele wersji v16 tego wymaga do zapisu)
+        password_md5 = hashlib.md5(self.password.encode()).hexdigest()
+        
+        # Budujemy parametry URL (niektóre PHP v16 czytają tylko z $_GET)
+        params = {
             "menu": menu,
             "name": name,
             "token": self.token,
             "value": int(round(value)),
             "user": self.username,
-            "pass": self.password
+            "pass": password_md5 # Próbujemy wersję MD5
         }
         
-        _LOGGER.warning("WYSYŁAM ZAPIS (POST v16): %s=%s", name, value)
+        _LOGGER.warning("WYSYŁAM ZAPIS (v16 Hybrid MD5): %s=%s", name, value)
         
         try:
-            # Zmiana z self._session.get na self._session.post
-            async with self._session.post(url, data=payload, headers=self._headers) as response:
+            # Próbujemy najpierw GET, bo to najczęstszy standard w tych skryptach
+            async with self._session.get(url, params=params, headers=self._headers) as response:
                 res_text = await response.text()
-                _LOGGER.warning("ODPOWIEDŹ API NA ZAPIS POST: %s", res_text)
+                _LOGGER.warning("ODPOWIEDŹ API (Próba 1 - MD5): %s", res_text)
                 
-                # Czasami v16 zwraca status:0 przy sukcesie lub po prostu tekst "OK"
+                if "OK" in res_text.upper() or '"status":"0"' in res_text:
+                    return True
+
+            # Próba 2: Jeśli MD5 nie zadziałało, próbujemy czyste hasło
+            params["pass"] = self.password
+            async with self._session.get(url, params=params, headers=self._headers) as response:
+                res_text = await response.text()
+                _LOGGER.warning("ODPOWIEDŹ API (Próba 2 - Plain): %s", res_text)
+                
                 return "OK" in res_text.upper() or '"status":"0"' in res_text
         except Exception as err:
-            _LOGGER.error("Wyjątek podczas zapisu POST: %s", err)
+            _LOGGER.error("Błąd podczas zapisu hybrydowego: %s", err)
             return False
