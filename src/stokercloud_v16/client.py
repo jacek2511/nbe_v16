@@ -102,14 +102,12 @@ class StokerCloudClientV16:
             "metrics": raw_main.get("metrics"),
         }
 
-        # ----------------------------
-        # Pobranie wszystkich menu
-        # ----------------------------
         menus: dict[str, Any] = {}
         for menu in self.MENU_SECTIONS:
             try:
                 if not self.token:
                     await self._refresh_token()  # upewniamy się, że token jest ważny
+        
                 async with async_timeout.timeout(10):
                     async with self._session.get(
                         f"{self.BASE_URL}getmenudata.php",
@@ -117,27 +115,31 @@ class StokerCloudClientV16:
                         headers=self._headers,
                     ) as resp:
                         try:
-                            menu_list = await resp.json(content_type=None)
+                            menu_data = await resp.json(content_type=None)
                         except Exception as parse_err:
                             _LOGGER.error("Nie udało się sparsować JSON dla menu %s: %s", menu, parse_err)
-                            menu_list = []
+                            menu_data = None
         
-                        if isinstance(menu_list, list):
-                            if not menu_list:
-                                _LOGGER.debug("Menu %s jest puste", menu)
+                        # Obsługa różnych formatów
+                        if isinstance(menu_data, list):
                             menus[menu] = {
                                 str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
-                                for i in menu_list if isinstance(i, dict) and "id" in i
+                                for i in menu_data if isinstance(i, dict) and "id" in i
                             }
-                        else:
-                            _LOGGER.warning("Menu %s zwróciło nieoczekiwany format: %s", menu, type(menu_list))
+                        elif isinstance(menu_data, dict):
+                            # Jeśli serwer zwraca dict, używamy go bez zmian
+                            menus[menu] = {k: (v if v != "N/A" else None) for k, v in menu_data.items()}
+                        elif menu_data is None:
                             menus[menu] = {}
+                        else:
+                            _LOGGER.warning("Menu %s zwróciło nieoczekiwany format: %s", menu, type(menu_data))
+                            menus[menu] = {}
+        
+                        _LOGGER.debug("Menu %s: %s", menu, menus[menu])
         
             except Exception as err:
                 _LOGGER.error("Błąd pobrania menu %s: %s", menu, err)
                 menus[menu] = {}
-        
-        data["menus"] = menus
         return data
 
     async def get_consumption(self, query_string: str) -> List[Any]:
