@@ -128,37 +128,52 @@ class StokerCloudClientV16:
                 return data if isinstance(data, list) else []
         except: return []
 
-    async def set_param(self, read_key: str, value: float) -> bool:
-        """Próba zapisu z wymuszonym nagłówkiem Cookie i uproszczonymi parametrami."""
+    async def set_param(self, param: str, value: float) -> bool:
+        """
+        Działający zapis do StokerCloud v16
+        – zgodny z ruchem z przeglądarki
+        """
+    
         if not self.token:
-            await self._refresh_token()
-        
-        target = "hot_water.temp" if "hot_water" in read_key else "boiler.temp"
+            if not await self._refresh_token():
+                return False
+    
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
-        
-        # Pobieramy ciasteczko ręcznie z sesji, by upewnić się, że zostanie wysłane
-        cookies = self._session.cookie_jar.filter_cookies(self.BASE_URL)
-        cookie_header = "; ".join([f"{k}={v.value}" for k, v in cookies.items()])
-
-        headers = self._headers.copy()
-        if cookie_header:
-            headers["Cookie"] = cookie_header
-        
-        # Tylko te parametry, które widzieliśmy w Twoim logu z przeglądarki
+    
         params = {
-            "menu": target,
-            "name": target,
-            "token": self.token,
-            "value": int(round(value))
+            "menu": param,          # np. hot_water.temp
+            "name": param,          # IDENTYCZNE
+            "value": int(round(value)),
+            "token": self.token
         }
-        
-        _LOGGER.warning("FINALNA PRÓBA (Browser Mimic): %s=%s", target, value)
-        
+    
+        headers = self._headers.copy()
+        headers.update({
+            "Referer": f"https://stokercloud.dk/v2/user/{self.username}",
+            "Accept": "*/*",
+            "X-Requested-With": "XMLHttpRequest"
+        })
+    
+        _LOGGER.warning("ZAPIS UI → %s = %s", param, value)
+    
         try:
-            async with self._session.get(url, params=params, headers=headers) as response:
-                res_text = await response.text()
-                _LOGGER.warning("ODPOWIEDŹ: %s", res_text)
-                return "OK" in res_text.upper() or '"status":"0"' in res_text
+            async with self._session.get(url, params=params, headers=headers) as resp:
+                text = await resp.text()
+                _LOGGER.warning("ODPOWIEDŹ: %s | %s", resp.status, text)
+    
+                # v16 często zwraca pustą odpowiedź albo OK
+                if resp.status == 200 and (
+                    text.strip() == ""
+                    or "OK" in text.upper()
+                    or '"status":0' in text
+                ):
+                    _LOGGER.warning("✅ ZAPIS POWIÓDŁ SIĘ")
+                    return True
+    
+                _LOGGER.error("❌ ZAPIS ODRZUCONY")
+                return False
+    
         except Exception as err:
-            _LOGGER.error("Błąd: %s", err)
+            _LOGGER.error("Błąd zapisu: %s", err)
             return False
+    
