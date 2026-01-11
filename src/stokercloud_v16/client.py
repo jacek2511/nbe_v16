@@ -44,7 +44,6 @@ class StokerCloudClientV16:
         return False
 
     async def _fetch_menu_section(self, section: str) -> Dict[str, Any]:
-        """Pobiera sekcję menu korzystając z przekazanego tokena."""
         if not self.token: return {}
         url = f"{self.BASE_URL}v16bckbeta/dataout2/getmenudata.php"
         params = {"menu": section, "token": self.token}
@@ -52,11 +51,11 @@ class StokerCloudClientV16:
             async with async_timeout.timeout(10):
                 async with self._session.get(url, params=params, headers=self._headers) as response:
                     data = await response.json(content_type=None)
-                    if isinstance(data, list):
-                        # Zwracamy słownik technicznych ID i ich wartości
+                    if isinstance(data, list) and len(data) > 0:
+                        _LOGGER.debug("Pobrano dane dla sekcji: %s", section)
                         return {str(item.get('id')): item.get('value') for item in data if 'id' in item}
-        except Exception as err:
-            _LOGGER.debug("Błąd pobierania sekcji %s: %s", section, err)
+        except Exception:
+            pass
         return {}
 
     async def fetch_data(self, retry=True) -> Dict[str, Any]:
@@ -76,7 +75,7 @@ class StokerCloudClientV16:
                     raw_data = await response.json(content_type=None)
                     parsed = self._parse_response(raw_data)
 
-                    # Pobieranie wszystkich sekcji menu równolegle
+                    # Pobieranie sekcji menu
                     tasks = [self._fetch_menu_section(sec) for sec in self.MENU_SECTIONS]
                     results = await asyncio.gather(*tasks)
 
@@ -119,13 +118,24 @@ class StokerCloudClientV16:
             return float(str(val).replace(',', '.')) if val is not None else 0.0
         except: return 0.0
 
+    async def get_consumption(self, query_string: str) -> List[Any]:
+        """Przywrócona metoda dla statystyk zużycia."""
+        if not self.token: return []
+        url = f"{self.BASE_URL}v16bckbeta/dataout2/getconsumption.php?{query_string}&token={self.token}"
+        try:
+            async with async_timeout.timeout(15):
+                async with self._session.get(url, headers=self._headers) as response:
+                    data = await response.json(content_type=None)
+                    return data if isinstance(data, list) else []
+        except Exception as err:
+            _LOGGER.error("Błąd pobierania zużycia: %s", err)
+            return []
+
     async def set_param(self, read_key: str, value: float) -> bool:
-        """Wysyła polecenie zmiany parametru (np. CWU)."""
         if not self.token:
             await self._refresh_token()
             if not self.token: return False
         
-        # Kluczowe mapowanie dla Twojej wersji v16
         mapping = {
             "dhwwanted": ("hot_water", "hot_water.temp"),
             "-wantedboilertemp": ("boiler", "boiler.temp"),
@@ -133,13 +143,7 @@ class StokerCloudClientV16:
         
         menu, name = mapping.get(read_key, (read_key.split('.')[0], read_key))
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
-        
-        params = {
-            "menu": menu,
-            "name": name,
-            "token": self.token,
-            "value": int(round(value))
-        }
+        params = {"menu": menu, "name": name, "token": self.token, "value": int(round(value))}
         
         _LOGGER.warning("PRÓBA ZAPISU: %s=%s w sekcji %s", name, value, menu)
         
@@ -149,5 +153,5 @@ class StokerCloudClientV16:
                 _LOGGER.warning("ODPOWIEDŹ API NA ZAPIS: %s", res_text)
                 return "OK" in res_text.upper()
         except Exception as err:
-            _LOGGER.error("Błąd komunikacji przy zapisie: %s", err)
+            _LOGGER.error("Błąd zapisu: %s", err)
             return False
