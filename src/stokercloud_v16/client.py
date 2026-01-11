@@ -1,17 +1,12 @@
 import aiohttp
-import asyncio
 import async_timeout
 import logging
 from typing import Dict, Any, List
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class StokerCloudClientV16:
-    """
-    StokerCloud v16 client – READ ONLY
-    Pobiera dane i normalizuje je do wspólnej struktury.
-    """
+    """StokerCloud v16 – klient read-only, normalizuje dane."""
 
     BASE_URL = "https://stokercloud.dk/v16bckbeta/dataout2/"
 
@@ -49,7 +44,6 @@ class StokerCloudClientV16:
         """Pobiera token API."""
         url = f"{self.BASE_URL}login.php"
         params = {"user": self.username, "pass": self.password}
-
         try:
             async with async_timeout.timeout(15):
                 async with self._session.get(url, params=params, headers=self._headers) as response:
@@ -60,19 +54,17 @@ class StokerCloudClientV16:
                         return True
         except Exception as err:
             _LOGGER.error("Błąd logowania API: %s", err)
-
         return False
 
     async def fetch_data(self) -> Dict[str, Any]:
-        """
-        Pobiera dane z API, spłaszcza menus i outputy,
-        zwraca kompletny słownik gotowy do HA.
-        """
-        if not self.token:
-            if not await self._refresh_token():
-                return {}
-    
-        # 1) Controllerdata
+        """Pobiera dane główne i menu oraz normalizuje je."""
+        if not self.token and not await self._refresh_token():
+            return {}
+
+        raw_main: Dict[str, Any] = {}
+        # ----------------------------
+        # Pobranie controllerdata2.php
+        # ----------------------------
         try:
             async with async_timeout.timeout(20):
                 async with self._session.get(
@@ -83,22 +75,20 @@ class StokerCloudClientV16:
                     raw_main = await resp.json(content_type=None)
         except Exception as err:
             _LOGGER.error("Błąd fetch controllerdata2: %s", err)
-            raw_main = {}
-    
-        # 2) Normalize raw_main lists
+
         def normalize_list(key: str) -> dict:
             return {
                 str(item.get("id")): (item.get("value") if item.get("value") != "N/A" else None)
                 for item in raw_main.get(key, [])
                 if isinstance(item, dict) and "id" in item
             }
-    
+
         data: dict[str, Any] = {
             "weatherdata": normalize_list("weatherdata"),
             "boilerdata": normalize_list("boilerdata"),
             "hopperdata": normalize_list("hopperdata"),
             "dhwdata": normalize_list("dhwdata"),
-            "frontdata": {item["id"]: item["value"] for item in raw_main.get("frontdata", []) if "id" in item},
+            "frontdata": normalize_list("frontdata"),
             "miscdata": raw_main.get("miscdata", {}),
             "leftoutput": raw_main.get("leftoutput", {}),
             "rightoutput": raw_main.get("rightoutput", {}),
@@ -111,8 +101,10 @@ class StokerCloudClientV16:
             "alias": raw_main.get("alias"),
             "metrics": raw_main.get("metrics"),
         }
-    
-        # 3) Menu sections – spłaszczone
+
+        # ----------------------------
+        # Pobranie wszystkich menu
+        # ----------------------------
         menus: dict[str, Any] = {}
         for menu in self.MENU_SECTIONS:
             try:
@@ -124,32 +116,15 @@ class StokerCloudClientV16:
                     ) as resp:
                         menu_list = await resp.json(content_type=None)
                         if isinstance(menu_list, list):
-                            for item in menu_list:
-                                if isinstance(item, dict) and "id" in item:
-                                    menus[f"menu_{menu}_{item['id']}"] = (
-                                        item["value"] if item.get("value") != "N/A" else None
-                                    )
+                            menus[menu] = {str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
+                                           for i in menu_list if isinstance(i, dict) and "id" in i}
+                        else:
+                            menus[menu] = {}
             except Exception as err:
                 _LOGGER.debug("Menu %s read error: %s", menu, err)
-    
+                menus[menu] = {}
+
         data["menus"] = menus
-    
-        # 4) Spłaszcz leftoutput
-        leftoutput = raw_main.get("leftoutput", {})
-        for key, item in leftoutput.items():
-            if isinstance(item, dict):
-                data[f"leftoutput_{key}_val"] = item.get("val")
-                data[f"leftoutput_{key}_unit"] = item.get("unit")
-                data[f"leftoutput_{key}_image"] = item.get("image")
-    
-        # 5) Spłaszcz rightoutput
-        rightoutput = raw_main.get("rightoutput", {})
-        for key, item in rightoutput.items():
-            if isinstance(item, dict):
-                data[f"rightoutput_{key}_val"] = item.get("val")
-                data[f"rightoutput_{key}_unit"] = item.get("unit")
-                data[f"rightoutput_{key}_image"] = item.get("image")
-    
         return data
 
     async def get_consumption(self, query_string: str) -> List[Any]:
