@@ -125,14 +125,15 @@ class StokerCloudClientV16:
         }
 
     async def set_param(self, item_id: str, value: float) -> bool:
-        """Wysyła zmianę parametru jako POST JSON."""
+        """Wysyła zmianę parametru do kontrolera v16 za pomocą POST."""
         if not self.token:
             await self._refresh_token()
 
+        # Próbujemy adresu bez 'bckbeta', który jest aktualnym standardem v16
         set_url = f"{self.BASE_URL}v16/dataout2/setdata2.php"
         
-        # Dane wysyłane w body (JSON)
-        payload = {
+        # Przygotowujemy dane do wysłania w formacie formularza (częste w PHP)
+        post_data = {
             "id": item_id,
             "value": int(value),
             "token": self.token
@@ -141,9 +142,14 @@ class StokerCloudClientV16:
         try:
             async with async_timeout.timeout(10):
                 # Zmieniamy .get na .post
-                async with self._session.post(set_url, json=payload, headers=self._headers) as response:
-                    _LOGGER.info("Odpowiedź serwera: %s", response.status)
-                    return response.status == 200
+                async with self._session.post(set_url, data=post_data, headers=self._headers) as response:
+                    if response.status == 200:
+                        _LOGGER.info("Pomyślnie zmieniono parametr %s na %s", item_id, value)
+                        return True
+                    else:
+                        # Logujemy status, żeby wiedzieć czy to nadal 404 czy może 403 (brak dostępu)
+                        _LOGGER.error("Błąd serwera StokerCloud przy zapisie: %s", response.status)
+                        return False
         except Exception as err:
-            _LOGGER.error("Wyjątek podczas set_param: %s", err)
+            _LOGGER.error("Wyjątek podczas komunikacji z API (set_param): %s", err)
             return False
