@@ -23,7 +23,7 @@ class StokerCloudClientV16:
 
     async def _refresh_token(self):
         """Logowanie w celu uzyskania tokena."""
-        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
+        login_url = f"{self.BASE_URL}v2/dataout2/login.php"
         params = {"user": self.username, "pass": self.password}
         
         try:
@@ -42,7 +42,7 @@ class StokerCloudClientV16:
         if not self.token:
             await self._refresh_token()
 
-        data_url = f"{self.BASE_URL}v2/dataout2/controllerdata2.php"
+        data_url = f"{self.BASE_URL}v16bckbeta/dataout2/controllerdata2.php"
         params = {"screen": self.screen_params, "token": self.token}
 
         try:
