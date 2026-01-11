@@ -34,24 +34,29 @@ class StokerCloudClientV16:
         }
 
     async def _refresh_token(self):
-        """KROK 1: Logowanie. Musi ustawić ciasteczko PHPSESSID w sesji."""
-        url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
-        params = {"user": self.username, "pass": self.password}
+        """KROK 1: Emulacja wejścia na stronę profilu i logowanie."""
+        # Najpierw wchodzimy na stronę użytkownika, żeby "podnieść" sesję PHP
+        profile_url = f"https://stokercloud.dk/v2/user/{self.username}"
+        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
         
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, params=params, headers=self._headers) as response:
+                # 1. 'Odwiedzamy' profil jak człowiek
+                await self._session.get(profile_url, headers=self._headers)
+                
+                # 2. Logujemy się po token
+                params = {"user": self.username, "pass": self.password}
+                async with self._session.get(login_url, params=params, headers=self._headers) as response:
                     res_json = await response.json(content_type=None)
                     if isinstance(res_json, dict) and 'token' in res_json:
                         self.token = res_json.get('token')
-                        # Logujemy ciasteczka - jeśli puste, to mamy problem z sesją w HA
                         cookies = self._session.cookie_jar.filter_cookies(self.BASE_URL)
-                        _LOGGER.warning("Zalogowano. Token OK. Ciasteczka sesji: %s", list(cookies.keys()))
+                        _LOGGER.warning("Sesja aktywna. Ciasteczka: %s", list(cookies.keys()))
                         return True
         except Exception as err:
-            _LOGGER.error("Błąd logowania: %s", err)
+            _LOGGER.error("Błąd inicjalizacji sesji: %s", err)
         return False
-
+    
     async def _fetch_menu_section(self, section: str) -> Dict[str, Any]:
         """Pobiera sekcję menu (np. hot_water)."""
         if not self.token: return {}
@@ -124,37 +129,49 @@ class StokerCloudClientV16:
         except: return []
 
     async def set_param(self, read_key: str, value: float) -> bool:
-        """KROK 2: Zapis danych. Musi używać ciasteczek z Kroku 1."""
+        """KROK 2: Zapis z użyciem pełnego URLa z Twojego logu."""
         if not self.token:
-            await self._refresh_token()
+            if not await self._refresh_token(): return False
         
-        # Zgodnie z Twoim logiem: menu i name są takie same
-        if read_key == "dhwwanted":
-            menu = "hot_water.temp"
-            name = "hot_water.temp"
-        elif read_key == "-wantedboilertemp":
-            menu = "boiler.temp"
-            name = "boiler.temp"
+        # Kluczowe: w v16 'menu' i 'name' są identyczne przy zmianie nastaw
+        if read_key in ["dhwwanted", "hot_water.temp"]:
+            menu_param = "hot_water.temp"
+            name_param = "hot_water.temp"
+        elif read_key in ["-wantedboilertemp", "boiler.temp"]:
+            menu_param = "boiler.temp"
+            name_param = "boiler.temp"
         else:
-            menu = read_key
-            name = read_key
+            menu_param = read_key
+            name_param = read_key
 
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
+        
+        # Dokładne odwzorowanie Twojego logu z przeglądarki
         params = {
-            "menu": menu,
-            "name": name,
+            "menu": menu_param,
+            "name": name_param,
             "token": self.token,
             "value": int(round(value))
         }
         
-        _LOGGER.warning("WYKONUJĘ UPDATE: %s na %s", name, value)
+        _LOGGER.warning("WYSYŁAM UPDATE (v16 Final): %s -> %s", name_param, value)
         
         try:
-            # Bardzo ważne: aiohttp session automatycznie dołączy ciasteczka sesji
+            # Używamy sesji, która ma już ciasteczka z _refresh_token
             async with self._session.get(url, params=params, headers=self._headers) as response:
                 res_text = await response.text()
-                _LOGGER.warning("ODPOWIEDŹ PO ZAPISIE: %s", res_text)
-                return "OK" in res_text.upper()
+                _LOGGER.warning("WYNIK ZAPISU: %s", res_text)
+                
+                if "OK" in res_text.upper() or '"status":"0"' in res_text:
+                    return True
+                
+                # Jeśli nadal 'Bad user', spróbuj wymusić odświeżenie sesji raz
+                if "Bad user" in res_text:
+                    _LOGGER.warning("Sesja wygasła lub odrzucona, odświeżam...")
+                    self.token = None
+                    return False # Coordinator spróbuje ponownie przy następnym cyklu
+                    
+                return False
         except Exception as err:
-            _LOGGER.error("Błąd podczas zapisu: %s", err)
+            _LOGGER.error("Błąd krytyczny zapisu: %s", err)
             return False
