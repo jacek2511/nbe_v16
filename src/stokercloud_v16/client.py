@@ -129,49 +129,44 @@ class StokerCloudClientV16:
         except: return []
 
     async def set_param(self, read_key: str, value: float) -> bool:
-        """KROK 2: Zapis z użyciem pełnego URLa z Twojego logu."""
+        """KROK 2: Zapis z wymuszeniem loginu i hasła w każdym żądaniu."""
         if not self.token:
             if not await self._refresh_token(): return False
         
-        # Kluczowe: w v16 'menu' i 'name' są identyczne przy zmianie nastaw
+        # Mapowanie kluczy na format v16
         if read_key in ["dhwwanted", "hot_water.temp"]:
-            menu_param = "hot_water.temp"
-            name_param = "hot_water.temp"
+            target = "hot_water.temp"
         elif read_key in ["-wantedboilertemp", "boiler.temp"]:
-            menu_param = "boiler.temp"
-            name_param = "boiler.temp"
+            target = "boiler.temp"
         else:
-            menu_param = read_key
-            name_param = read_key
+            target = read_key
 
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Dokładne odwzorowanie Twojego logu z przeglądarki
+        # Przesyłamy WSZYSTKO: token, user i pass w jednym zapytaniu GET
+        # To najskuteczniejsza metoda, gdy sesja PHP (PHPSESSID) 'nie trzyma' uprawnień
         params = {
-            "menu": menu_param,
-            "name": name_param,
+            "menu": target,
+            "name": target,
             "token": self.token,
-            "value": int(round(value))
+            "value": int(round(value)),
+            "user": self.username,
+            "pass": self.password
         }
         
-        _LOGGER.warning("WYSYŁAM UPDATE (v16 Final): %s -> %s", name_param, value)
+        _LOGGER.warning("PRÓBA ZAPISU (Force Auth): %s=%s", target, value)
         
         try:
-            # Używamy sesji, która ma już ciasteczka z _refresh_token
             async with self._session.get(url, params=params, headers=self._headers) as response:
                 res_text = await response.text()
-                _LOGGER.warning("WYNIK ZAPISU: %s", res_text)
+                _LOGGER.warning("ODPOWIEDŹ SERWERA: %s", res_text)
                 
+                # Sukces w v16 to albo tekst 'OK', albo status:0
                 if "OK" in res_text.upper() or '"status":"0"' in res_text:
+                    _LOGGER.warning("SUKCES! Parametr %s zmieniony.", target)
                     return True
                 
-                # Jeśli nadal 'Bad user', spróbuj wymusić odświeżenie sesji raz
-                if "Bad user" in res_text:
-                    _LOGGER.warning("Sesja wygasła lub odrzucona, odświeżam...")
-                    self.token = None
-                    return False # Coordinator spróbuje ponownie przy następnym cyklu
-                    
                 return False
         except Exception as err:
-            _LOGGER.error("Błąd krytyczny zapisu: %s", err)
+            _LOGGER.error("Błąd połączenia podczas zapisu: %s", err)
             return False
