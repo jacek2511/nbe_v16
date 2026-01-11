@@ -131,7 +131,7 @@ class StokerCloudClientV16:
             _LOGGER.error("Błąd pobierania zużycia: %s", err)
             return []
 
-async def set_param(self, read_key: str, value: float) -> bool:
+    async def set_param(self, read_key: str, value: float) -> bool:
         """Wysyła polecenie zmiany z jawnym przekazaniem loginu/hasła (wymagane przez v16)."""
         if not self.token:
             await self._refresh_token()
