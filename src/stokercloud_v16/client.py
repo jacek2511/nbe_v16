@@ -65,16 +65,14 @@ class StokerCloudClientV16:
 
     async def fetch_data(self) -> Dict[str, Any]:
         """
-        Pobiera:
-        - main data z controllerdata2.php
-        - każdą sekcję menu z getmenudata.php
-        łączy je ładnie w jeden słownik.
+        Pobiera dane z API, spłaszcza menus i outputy,
+        zwraca kompletny słownik gotowy do HA.
         """
         if not self.token:
             if not await self._refresh_token():
                 return {}
-
-        # 1) Controllerdata (front + misc + inne)
+    
+        # 1) Controllerdata
         try:
             async with async_timeout.timeout(20):
                 async with self._session.get(
@@ -86,21 +84,21 @@ class StokerCloudClientV16:
         except Exception as err:
             _LOGGER.error("Błąd fetch controllerdata2: %s", err)
             raw_main = {}
-
+    
         # 2) Normalize raw_main lists
         def normalize_list(key: str) -> dict:
             return {
-                str(item.get("id")): item.get("value")
+                str(item.get("id")): (item.get("value") if item.get("value") != "N/A" else None)
                 for item in raw_main.get(key, [])
                 if isinstance(item, dict) and "id" in item
             }
-
+    
         data: dict[str, Any] = {
             "weatherdata": normalize_list("weatherdata"),
             "boilerdata": normalize_list("boilerdata"),
             "hopperdata": normalize_list("hopperdata"),
             "dhwdata": normalize_list("dhwdata"),
-            "frontdata": normalize_list("frontdata"),
+            "frontdata": {item["id"]: item["value"] for item in raw_main.get("frontdata", []) if "id" in item},
             "miscdata": raw_main.get("miscdata", {}),
             "leftoutput": raw_main.get("leftoutput", {}),
             "rightoutput": raw_main.get("rightoutput", {}),
@@ -113,8 +111,8 @@ class StokerCloudClientV16:
             "alias": raw_main.get("alias"),
             "metrics": raw_main.get("metrics"),
         }
-
-        # 3) Menu sections
+    
+        # 3) Menu sections – spłaszczone
         menus: dict[str, Any] = {}
         for menu in self.MENU_SECTIONS:
             try:
@@ -126,18 +124,32 @@ class StokerCloudClientV16:
                     ) as resp:
                         menu_list = await resp.json(content_type=None)
                         if isinstance(menu_list, list):
-                            menus[menu] = {
-                                str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
-                                for i in menu_list if isinstance(i, dict) and "id" in i
-                            }
-                        else:
-                            menus[menu] = {}
+                            for item in menu_list:
+                                if isinstance(item, dict) and "id" in item:
+                                    menus[f"menu_{menu}_{item['id']}"] = (
+                                        item["value"] if item.get("value") != "N/A" else None
+                                    )
             except Exception as err:
                 _LOGGER.debug("Menu %s read error: %s", menu, err)
-                menus[menu] = {}
-
+    
         data["menus"] = menus
-
+    
+        # 4) Spłaszcz leftoutput
+        leftoutput = raw_main.get("leftoutput", {})
+        for key, item in leftoutput.items():
+            if isinstance(item, dict):
+                data[f"leftoutput_{key}_val"] = item.get("val")
+                data[f"leftoutput_{key}_unit"] = item.get("unit")
+                data[f"leftoutput_{key}_image"] = item.get("image")
+    
+        # 5) Spłaszcz rightoutput
+        rightoutput = raw_main.get("rightoutput", {})
+        for key, item in rightoutput.items():
+            if isinstance(item, dict):
+                data[f"rightoutput_{key}_val"] = item.get("val")
+                data[f"rightoutput_{key}_unit"] = item.get("unit")
+                data[f"rightoutput_{key}_image"] = item.get("image")
+    
         return data
 
     async def get_consumption(self, query_string: str) -> List[Any]:
