@@ -129,44 +129,36 @@ class StokerCloudClientV16:
         except: return []
 
     async def set_param(self, read_key: str, value: float) -> bool:
-        """KROK 2: Zapis z wymuszeniem loginu i hasła w każdym żądaniu."""
+        """Próba zapisu z wymuszonym nagłówkiem Cookie i uproszczonymi parametrami."""
         if not self.token:
-            if not await self._refresh_token(): return False
+            await self._refresh_token()
         
-        # Mapowanie kluczy na format v16
-        if read_key in ["dhwwanted", "hot_water.temp"]:
-            target = "hot_water.temp"
-        elif read_key in ["-wantedboilertemp", "boiler.temp"]:
-            target = "boiler.temp"
-        else:
-            target = read_key
-
+        target = "hot_water.temp" if "hot_water" in read_key else "boiler.temp"
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Przesyłamy WSZYSTKO: token, user i pass w jednym zapytaniu GET
-        # To najskuteczniejsza metoda, gdy sesja PHP (PHPSESSID) 'nie trzyma' uprawnień
+        # Pobieramy ciasteczko ręcznie z sesji, by upewnić się, że zostanie wysłane
+        cookies = self._session.cookie_jar.filter_cookies(self.BASE_URL)
+        cookie_header = "; ".join([f"{k}={v.value}" for k, v in cookies.items()])
+
+        headers = self._headers.copy()
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+        
+        # Tylko te parametry, które widzieliśmy w Twoim logu z przeglądarki
         params = {
             "menu": target,
             "name": target,
             "token": self.token,
-            "value": int(round(value)),
-            "user": self.username,
-            "pass": self.password
+            "value": int(round(value))
         }
         
-        _LOGGER.warning("PRÓBA ZAPISU (Force Auth): %s=%s", target, value)
+        _LOGGER.warning("FINALNA PRÓBA (Browser Mimic): %s=%s", target, value)
         
         try:
-            async with self._session.get(url, params=params, headers=self._headers) as response:
+            async with self._session.get(url, params=params, headers=headers) as response:
                 res_text = await response.text()
-                _LOGGER.warning("ODPOWIEDŹ SERWERA: %s", res_text)
-                
-                # Sukces w v16 to albo tekst 'OK', albo status:0
-                if "OK" in res_text.upper() or '"status":"0"' in res_text:
-                    _LOGGER.warning("SUKCES! Parametr %s zmieniony.", target)
-                    return True
-                
-                return False
+                _LOGGER.warning("ODPOWIEDŹ: %s", res_text)
+                return "OK" in res_text.upper() or '"status":"0"' in res_text
         except Exception as err:
-            _LOGGER.error("Błąd połączenia podczas zapisu: %s", err)
+            _LOGGER.error("Błąd: %s", err)
             return False
