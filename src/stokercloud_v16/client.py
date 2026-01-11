@@ -35,36 +35,46 @@ class StokerCloudClientV16:
 
     async def _login_ui(self) -> bool:
         """
-        Login UI dla StokerCloud v16
-        WYMAGANY do zapisu (PHPSESSID na v16.stokercloud.dk)
+        Prawdziwy login UI StokerCloud v16
+        /login  -> GET
+        /login_check -> POST (ustawia PHPSESSID)
         """
     
-        login_url = "https://v16.stokercloud.dk/login"
-    
-        payload = {
-            "user": self.username,
-            "pass": self.password,
-        }
-    
-        headers = {
-            "User-Agent": self._headers["User-Agent"],
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://v16.stokercloud.dk",
-            "Referer": "https://v16.stokercloud.dk/login",
-        }
+        base = "https://v16.stokercloud.dk"
     
         try:
             async with async_timeout.timeout(15):
+    
+                # 1️⃣ Wejście na stronę login (inicjuje sesję)
+                await self._session.get(
+                    f"{base}/login",
+                    headers={
+                        "User-Agent": self._headers["User-Agent"],
+                        "Referer": f"{base}/login",
+                    },
+                )
+    
+                # 2️⃣ Właściwe logowanie
+                payload = {
+                    "_username": self.username,
+                    "_password": self.password,
+                }
+    
+                headers = {
+                    "User-Agent": self._headers["User-Agent"],
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin": base,
+                    "Referer": f"{base}/login",
+                }
+    
                 async with self._session.post(
-                    login_url,
+                    f"{base}/login_check",
                     data=payload,
                     headers=headers,
                     allow_redirects=True,
                 ) as resp:
     
-                    cookies = self._session.cookie_jar.filter_cookies(
-                        "https://v16.stokercloud.dk"
-                    )
+                    cookies = self._session.cookie_jar.filter_cookies(base)
     
                     _LOGGER.warning("LOGIN UI STATUS: %s", resp.status)
                     _LOGGER.warning("LOGIN UI COOKIES: %s", cookies)
@@ -73,7 +83,7 @@ class StokerCloudClientV16:
                         _LOGGER.warning("✅ SESJA UI v16 AKTYWNA")
                         return True
     
-                    _LOGGER.error("❌ Brak PHPSESSID po loginie v16")
+                    _LOGGER.error("❌ Brak PHPSESSID po login_check")
                     return False
     
         except Exception as err:
