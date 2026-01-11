@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stokercloud_v16"
+version = "1.0.0"
+description = "Asynchronous Python client for NBE StokerCloud v16 API"
+readme = "README.md"
+authors = [
+    { name = "JaCeK2511", email = "pijacek@gmail.com" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp>=3.8.1",
+    "async_timeout>=4.0.0"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/jacek2511/nbe_v16"
+"Bug Tracker" = "https://github.com/jacek2511/nbe_v16/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
