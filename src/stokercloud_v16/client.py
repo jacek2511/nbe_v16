@@ -124,7 +124,7 @@ class StokerCloudClientV16:
             }
         }
 
-async def set_param(self, item_id: str, value: float) -> bool:
+    async def set_param(self, item_id: str, value: float) -> bool:
         """Wysyła zmianę parametru zgodnie z odkrytym formatem v16 updatevalue.php."""
         if not self.token:
             await self._refresh_token()
