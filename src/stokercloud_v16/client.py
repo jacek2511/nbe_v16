@@ -14,6 +14,7 @@ class StokerCloudClientV16:
         self.password = password
         self._session = session
         self.token = None
+        # Zestaw parametrów ekranowych (standard v16)
         self.screen_params = "b1,17,b2,5,b3,4,b4,6,b5,12,b6,14,b7,15,b8,16,b9,9,b10,7,d1,3,d2,4,d3,4,d4,0,d5,0,d6,0,d7,0,d8,0,d9,0,d10,0,h1,2,h2,3,h3,5,h4,13,h5,4,h6,1,h7,9,h8,10,h9,7,h10,8,w1,2,w2,3,w3,9,w4,4,w5,5"
         self._headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -22,7 +23,7 @@ class StokerCloudClientV16:
         }
 
     async def _refresh_token(self):
-        """Logowanie w celu uzyskania tokena (v16 beta)."""
+        """Logowanie do v16."""
         login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
         params = {"user": self.username, "pass": self.password}
         
@@ -32,14 +33,13 @@ class StokerCloudClientV16:
                     data = await response.json(content_type=None)
                     self.token = data.get('token')
                     if not self.token:
-                        raise Exception(f"Brak tokena w odpowiedzi: {data}")
-                    _LOGGER.debug("Pomyślnie odświeżono token sesji")
+                        raise Exception(f"Brak tokena: {data}")
         except Exception as err:
-            _LOGGER.error("Błąd logowania StokerCloud: %s", err)
+            _LOGGER.error("Błąd logowania: %s", err)
             raise
 
     async def fetch_data(self, retry=True) -> Dict[str, Any]:
-        """Pobieranie danych bieżących z kontrolera."""
+        """Pobiera wszystkie dane z kontrolera."""
         if not self.token:
             await self._refresh_token()
 
@@ -49,14 +49,14 @@ class StokerCloudClientV16:
         try:
             async with async_timeout.timeout(20):
                 async with self._session.get(data_url, params=params, headers=self._headers) as response:
-                    if response.status == 401:
+                    if response.status == 401 and retry:
                         self.token = None
+                        await self._refresh_token()
                         return await self.fetch_data(retry=False)
                     
                     raw_data = await response.json(content_type=None)
                     if not raw_data.get("frontdata") and retry:
                         self.token = None
-                        await self._refresh_token()
                         return await self.fetch_data(retry=False)
                     
                     return self._parse_response(raw_data)
@@ -65,119 +65,108 @@ class StokerCloudClientV16:
             raise
 
     async def get_consumption(self, query_string: str) -> List[Any]:
-        """Pobiera statystyki zużycia z poprawionym formatowaniem okresów."""
+        """Pobiera statystyki (naprawa błędu pustej tablicy)."""
         if not self.token:
             await self._refresh_token()
-
-        # Rozbijamy query_string, np. 'months=1'
-        key, val = query_string.split('=')
         
-        # Dla miesięcy i lat v16 beta czasem potrzebuje 'months=12' lub 'years=10' 
-        # by zainicjować poprawnie tablicę danych.
-        query_params = {
-            key: val,
-            "token": self.token
-        }
-
+        # Rozbijamy np. 'months=12' na słownik
+        q_params = dict(item.split("=") for item in query_string.split("&"))
+        q_params["token"] = self.token
+        
         url = f"{self.BASE_URL}v16bckbeta/dataout2/getconsumption.php"
-        
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, params=query_params, headers=self._headers) as response:
+                async with self._session.get(url, params=q_params, headers=self._headers) as response:
                     if response.status == 200:
-                        json_data = await response.json(content_type=None)
-                        _LOGGER.debug("Statystyki %s: Otrzymano %s serii danych", query_string, len(json_data))
-                        return json_data
+                        return await response.json(content_type=None)
                     return []
-        except Exception as err:
-            _LOGGER.error("Błąd statystyk %s: %s", query_string, err)
+        except Exception:
             return []
 
-    async def set_param(self, item_id: str, value: float) -> bool:
-        """Wysyła zmianę parametru zgodnie z logiką menu v16."""
+    async def set_param(self, read_key: str, value: float) -> bool:
+        """Inteligentne ustawianie parametru z mapowaniem v16."""
         if not self.token:
             await self._refresh_token()
 
         set_url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Twoje logi pokazują, że dla CWU menu i name to 'hot_water.temp'
-        # Dla kotła najprawdopodobniej analogicznie 'boiler.temp'
-        special_cases = {
-            "dhwwanted": ("hot_water.temp", "hot_water.temp"),
-            "-wantedboilertemp": ("boiler.temp", "boiler.temp"),
+        # --- MAPOWANIE KLUCZY (Read Key -> Write Menu/Name) ---
+        # Tutaj rozwiązujemy problem dhwwanted vs hot_water.temp
+        mapping = {
+            "dhwwanted": {"menu": "hot_water.temp", "name": "hot_water.temp"},
+            "-wantedboilertemp": {"menu": "boiler.temp", "name": "boiler.temp"},
+            
+            # Parametry regulacji
+            "regulation.max_power": {"menu": "regulation", "name": "regulation.max_power"},
+            "regulation.min_power": {"menu": "regulation", "name": "regulation.min_power"},
+            
+            # Parametry rozpalania (prefix ignition vs menu igniter)
+            "ignition.pellets": {"menu": "igniter", "name": "ignition.pellets"},
+            "ignition.power": {"menu": "igniter", "name": "ignition.power"},
         }
 
-        if item_id in special_cases:
-            menu, name = special_cases[item_id]
+        # Domyślna logika (jeśli klucza nie ma w mapie)
+        if read_key in mapping:
+            cfg = mapping[read_key]
+            menu = cfg["menu"]
+            name = cfg["name"]
         else:
-            # Domyślne mapowanie dla reszty (np. ignition.power)
-            prefix = item_id.split('.')[0] if '.' in item_id else item_id
-            menu = prefix
-            name = item_id
+            # Próba zgadnięcia: fan.speed -> menu=fan, name=fan.speed
+            parts = read_key.split('.')
+            menu = parts[0]
+            name = read_key
 
+        # Parametry żądania
         params = {
             "menu": menu,
             "name": name,
             "token": self.token,
-            "value": int(round(float(value)))
+            "value": int(round(float(value))) # v16 wymaga integera
         }
 
-        # W v16 ten nagłówek jest często wymagany do akceptacji zapisu
+        # Nagłówek AJAX (kluczowy dla v16)
         headers = self._headers.copy()
         headers["X-Requested-With"] = "XMLHttpRequest"
 
         try:
-            async with async_timeout.timeout(10):
-                async with self._session.get(set_url, params=params, headers=headers) as response:
-                    text_resp = await response.text()
-                    _LOGGER.info("Zapis: %s=%s | Status: %s | Odp: %s", name, value, response.status, text_resp)
-                    return response.status == 200 and "OK" in text_resp.upper()
+            async with self._session.get(set_url, params=params, headers=headers) as response:
+                text = await response.text()
+                _LOGGER.info("SET %s -> %s | Odp: %s", name, value, text)
+                return response.status == 200 and "OK" in text.upper()
         except Exception as err:
-            _LOGGER.error("Błąd zapisu %s: %s", item_id, err)
+            _LOGGER.error("Błąd zapisu %s: %s", read_key, err)
             return False
-    
-    def _get_val(self, data_source, item_id):
-        val = None
-        if isinstance(data_source, list):
-            for item in data_source:
-                if str(item.get("id")) == str(item_id):
-                    val = item.get("value")
-                    break
-        elif isinstance(data_source, dict):
-            val = data_source.get(item_id)
-
-        if val is not None:
-            try:
-                clean_val = str(val).replace(',', '.')
-                return float(clean_val) if clean_val not in ["None", "N/A", ""] else None
-            except ValueError:
-                return val
-        return None
 
     def _parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Spłaszcza strukturę JSON do jednej dużej mapy atrybutów."""
         front = data.get("frontdata", {})
         misc = data.get("miscdata", {})
         
-        def safe_map(data_key):
-            source = data.get(data_key, [])
-            if isinstance(source, list):
-                return {item.get('id'): item.get('value') for item in source if 'id' in item}
-            elif isinstance(source, dict):
-                return source
+        # Funkcja pomocnicza do zamiany list [{'id':'x', 'value':'y'}] na dict {'x':'y'}
+        def flatten_list(source_list):
+            if isinstance(source_list, list):
+                return {item.get('id'): item.get('value') for item in source_list if 'id' in item}
             return {}
 
-        return {
-            "boiler_temp": self._get_val(front, "boilertemp"),
-            "target_temp": self._get_val(front, "-wantedboilertemp"),
+        # Parsujemy poszczególne sekcje
+        parsed = {
+            "boiler_temp": self._safe_float(front.get("boilertemp")),
             "state": misc.get("state", {}).get("value") if isinstance(misc.get("state"), dict) else "Unknown",
-            "username": self.username,
-            "all_attributes": {
-                "boiler": safe_map("boilerdata"),
-                "hopper": safe_map("hopperdata"),
-                "dhw": safe_map("dhwdata"),
-                "front": safe_map("frontdata"),
-                "misc": misc,
-                "weathercomp": data.get("weathercomp", {}),
-                "serial": data.get("serial")
+            # Zachowujemy pełne struktury dla atrybutów
+            "attributes": {
+                "front": front, # Tu jest dhwwanted, boiler_temp itp.
+                "boiler": flatten_list(data.get("boilerdata", [])),
+                "dhw": flatten_list(data.get("dhwdata", [])), # Tu są techniczne nastawy CWU
+                "hopper": flatten_list(data.get("hopperdata", [])),
+                "regulation": flatten_list(data.get("regulationdata", [])),
+                "weather": flatten_list(data.get("weathercomp", [])),
+                "ignition": flatten_list(data.get("ignitiondata", []))
             }
         }
+        return parsed
+
+    def _safe_float(self, val):
+        try:
+            return float(str(val).replace(',', '.'))
+        except (ValueError, TypeError):
+            return 0.0
