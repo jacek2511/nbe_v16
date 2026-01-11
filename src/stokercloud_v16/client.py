@@ -131,11 +131,12 @@ class StokerCloudClientV16:
             _LOGGER.error("Błąd pobierania zużycia: %s", err)
             return []
 
-    async def set_param(self, read_key: str, value: float) -> bool:
+async def set_param(self, read_key: str, value: float) -> bool:
+        """Wysyła polecenie zmiany z jawnym przekazaniem loginu/hasła (wymagane przez v16)."""
         if not self.token:
             await self._refresh_token()
-            if not self.token: return False
         
+        # Mapa parametrów
         mapping = {
             "dhwwanted": ("hot_water", "hot_water.temp"),
             "-wantedboilertemp": ("boiler", "boiler.temp"),
@@ -143,15 +144,24 @@ class StokerCloudClientV16:
         
         menu, name = mapping.get(read_key, (read_key.split('.')[0], read_key))
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
-        params = {"menu": menu, "name": name, "token": self.token, "value": int(round(value))}
         
-        _LOGGER.warning("PRÓBA ZAPISU: %s=%s w sekcji %s", name, value, menu)
+        # Kluczowa zmiana: dodajemy user i pass bezpośrednio do zapytania updatevalue
+        params = {
+            "menu": menu,
+            "name": name,
+            "token": self.token,
+            "value": int(round(value)),
+            "user": self.username,
+            "pass": self.password
+        }
+        
+        _LOGGER.warning("WYSYŁAM ZAPIS (v16 Secure): %s=%s", name, value)
         
         try:
             async with self._session.get(url, params=params, headers=self._headers) as response:
                 res_text = await response.text()
                 _LOGGER.warning("ODPOWIEDŹ API NA ZAPIS: %s", res_text)
-                return "OK" in res_text.upper()
+                return "OK" in res_text.upper() or '"status":"0"' in res_text
         except Exception as err:
-            _LOGGER.error("Błąd zapisu: %s", err)
+            _LOGGER.error("Błąd komunikacji przy zapisie: %s", err)
             return False
