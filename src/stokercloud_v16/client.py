@@ -190,7 +190,7 @@ class StokerCloudClientV16:
                 return False
     
         # 🔍 Diagnostyka sesji
-        cookies = self._session.cookie_jar.filter_cookies("https://stokercloud.dk")
+        cookies = self._session.cookie_jar.filter_cookies("https://v16.stokercloud.dk")
         _LOGGER.warning("COOKIES PRZED ZAPISEM: %s", cookies)
     
         if "PHPSESSID" not in cookies:
