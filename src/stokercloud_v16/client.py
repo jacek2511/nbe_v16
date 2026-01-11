@@ -9,6 +9,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class StokerCloudClientV16:
     BASE_URL = "https://stokercloud.dk/"
+    BASE_URL_WRITE = "https://v16.stokercloud.dk/
 
     MENU_SECTIONS = [
         "boiler", "hot_water", "regulation", "igniter",
@@ -178,7 +179,7 @@ class StokerCloudClientV16:
         ZAPIS parametru – v16 wymaga user/pass (token NIE DZIAŁA)
         """
     
-        url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
+        url = f"{self.BASE_URL_WRITE}v16bckbeta/dataout2/updatevalue.php"
     
         params = {
             "user": self.username,
