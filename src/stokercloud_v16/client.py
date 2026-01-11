@@ -176,24 +176,43 @@ class StokerCloudClientV16:
     # ------------------------------------------------------------------
     async def set_param(self, write_key: str, value: float) -> bool:
         """
-        ZAPIS parametru – v16 wymaga user/pass (token NIE DZIAŁA)
+        Zapis parametru do StokerCloud v16
+        Wymaga:
+        - PHPSESSID (login UI)
+        - token (API)
+        - X-Requested-With
         """
     
-        url = f"{self.BASE_URL_WRITE}v16bckbeta/dataout2/updatevalue.php"
+        if not self.token:
+            if not await self._refresh_token():
+                return False
+    
+        url = "https://v16.stokercloud.dk/v16bckbeta/dataout2/updatevalue.php"
     
         params = {
-            "user": self.username,
-            "pass": self.password,
             "menu": write_key,
             "name": write_key,
             "value": int(round(value)),
+            "token": self.token,
+        }
+    
+        headers = {
+            "User-Agent": self._headers["User-Agent"],
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://v16.stokercloud.dk/",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
         }
     
         _LOGGER.warning("ZAPIS → %s = %s", write_key, value)
     
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, params=params) as resp:
+                async with self._session.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                ) as resp:
+    
                     text = await resp.text()
                     _LOGGER.warning("RESP: %s | %s", resp.status, text)
     
@@ -209,4 +228,5 @@ class StokerCloudClientV16:
         except Exception as err:
             _LOGGER.error("Błąd zapisu: %s", err)
             return False
+
 
