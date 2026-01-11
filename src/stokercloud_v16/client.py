@@ -52,7 +52,7 @@ class StokerCloudClientV16:
         if not self.token:
             await self._refresh_token()
 
-        data_url = f"{self.BASE_URL}v16bckbeta/dataout2/controllerdata2.php"
+        data_url = f"{self.BASE_URL}v2/dataout2/controllerdata2.php"
         params = {"screen": self.screen_params, "token": self.token}
 
         try:
