@@ -191,23 +191,15 @@ class StokerCloudClientV16:
     
     async def set_param(self, write_key: str, value: float) -> bool:
         """
-        Zapis parametru – WYMAGA aktywnej sesji UI (PHPSESSID)
-        write_key np. hot_water.temp
+        Zapis parametru do StokerCloud v16
+        Działa WYŁĄCZNIE na tokenie
         """
     
         if not self.token:
             if not await self._refresh_token():
                 return False
     
-        # 🔍 Diagnostyka sesji
-        cookies = self._session.cookie_jar.filter_cookies("https://v16.stokercloud.dk")
-        _LOGGER.warning("COOKIES PRZED ZAPISEM: %s", cookies)
-    
-        if "PHPSESSID" not in cookies:
-            _LOGGER.error("❌ Brak PHPSESSID – zapis niemożliwy")
-            return False
-    
-        url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
+        url = "https://stokercloud.dk/v16bckbeta/dataout2/updatevalue.php"
     
         params = {
             "menu": write_key,
@@ -220,7 +212,7 @@ class StokerCloudClientV16:
     
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, params=params, headers=self._headers) as resp:
+                async with self._session.get(url, params=params) as resp:
                     text = await resp.text()
                     _LOGGER.warning("RESP: %s | %s", resp.status, text)
     
@@ -236,3 +228,4 @@ class StokerCloudClientV16:
         except Exception as err:
             _LOGGER.error("Błąd zapisu: %s", err)
             return False
+
