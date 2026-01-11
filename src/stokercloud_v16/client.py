@@ -11,13 +11,13 @@ class StokerCloudClientV16:
     """
     StokerCloud v16 client – READ ONLY
 
-    ✔ Odczyt danych (token API)
+    ✔ Odczyt danych
     ✖ Zapis parametrów (zablokowany po stronie NBE)
     """
 
-    BASE_URL = "https://stokercloud.dk/"
+    BASE_URL = "https://stokercloud.dk/v16bckbeta/dataout2/"
 
-    MENU_SECTIONS = [
+    MENU_SECTIONS = (
         "boiler",
         "hot_water",
         "regulation",
@@ -31,7 +31,7 @@ class StokerCloudClientV16:
         "weather",
         "manual",
         "timer",
-    ]
+    )
 
     def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
         self.username = username
@@ -53,139 +53,122 @@ class StokerCloudClientV16:
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
             "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
             "X-Requested-With": "XMLHttpRequest",
             "Connection": "keep-alive",
         }
 
     # ------------------------------------------------------------------
-    # LOGIN API (TOKEN) – JEDYNA AUTORYZACJA
+    # LOGIN (TOKEN)
     # ------------------------------------------------------------------
     async def _refresh_token(self) -> bool:
-        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
+        url = f"{self.BASE_URL}login.php"
         params = {"user": self.username, "pass": self.password}
 
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(
-                    login_url, params=params, headers=self._headers
-                ) as response:
-                    data = await response.json(content_type=None)
-
-                    if isinstance(data, dict) and "token" in data:
+                async with self._session.get(url, params=params, headers=self._headers) as r:
+                    data = await r.json(content_type=None)
+                    if isinstance(data, dict) and data.get("token"):
                         self.token = data["token"]
-                        _LOGGER.debug("StokerCloud v16: token API OK")
+                        _LOGGER.debug("StokerCloud v16: token OK")
                         return True
-
-                    _LOGGER.error(
-                        "StokerCloud v16: niepoprawna odpowiedź login.php: %s", data
-                    )
-
         except Exception as err:
-            _LOGGER.error("StokerCloud v16: błąd logowania API: %s", err)
+            _LOGGER.error("StokerCloud v16: błąd logowania: %s", err)
 
         return False
 
     # ------------------------------------------------------------------
-    # ODCZYT DANYCH
+    # CONTROLLER DATA (front + misc)
     # ------------------------------------------------------------------
-    async def _fetch_menu_section(self, section: str) -> Dict[str, Any]:
+    async def fetch_data(self) -> Dict[str, Any]:
+        if not self.token and not await self._refresh_token():
+            return {}
+
+        url = f"{self.BASE_URL}controllerdata2.php"
+        params = {"screen": self.screen_params, "token": self.token}
+
+        try:
+            async with self._session.get(url, params=params, headers=self._headers) as r:
+                raw = await r.json(content_type=None)
+                return self._parse_response(raw)
+        except Exception as err:
+            _LOGGER.error("StokerCloud v16: fetch_data error: %s", err)
+            return {}
+
+    # ------------------------------------------------------------------
+    # MENU DATA (READ ONLY)
+    # ------------------------------------------------------------------
+    async def get_menu_data(self, menu: str) -> Dict[str, Any]:
         if not self.token:
             return {}
 
-        url = f"{self.BASE_URL}v16bckbeta/dataout2/getmenudata.php"
-        params = {"menu": section, "token": self.token}
+        url = f"{self.BASE_URL}getmenudata.php"
+        params = {"menu": menu, "token": self.token}
 
         try:
-            async with self._session.get(
-                url, params=params, headers=self._headers
-            ) as response:
-                data = await response.json(content_type=None)
+            async with self._session.get(url, params=params, headers=self._headers) as r:
+                data = await r.json(content_type=None)
+
                 if isinstance(data, list):
                     return {
                         str(item.get("id")): item.get("value")
                         for item in data
                         if isinstance(item, dict) and "id" in item
                     }
-        except Exception:
-            pass
+
+        except Exception as err:
+            _LOGGER.debug("Menu %s error: %s", menu, err)
 
         return {}
 
-    async def fetch_data(self) -> Dict[str, Any]:
-        if not self.token:
-            if not await self._refresh_token():
-                return {}
+    # ------------------------------------------------------------------
+    # PARSER
+    # ------------------------------------------------------------------
+    def _parse_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
 
-        data_url = f"{self.BASE_URL}v16bckbeta/dataout2/controllerdata2.php"
-        params = {"screen": self.screen_params, "token": self.token}
-
-        try:
-            async with self._session.get(
-                data_url, params=params, headers=self._headers
-            ) as response:
-                raw_data = await response.json(content_type=None)
-                parsed = self._parse_response(raw_data)
-
-                tasks = [self._fetch_menu_section(sec) for sec in self.MENU_SECTIONS]
-                results = await asyncio.gather(*tasks)
-
-                for idx, section in enumerate(self.MENU_SECTIONS):
-                    if results[idx]:
-                        parsed["attributes"][section] = results[idx]
-
-                return parsed
-
-        except Exception as err:
-            _LOGGER.error("StokerCloud v16: błąd fetch_data: %s", err)
-            return {}
-
-    def _parse_response(self, data: Any) -> Dict[str, Any]:
-        raw_front = data.get("frontdata", [])
-        front_dict = {
-            str(i.get("id")): i.get("value")
-            for i in raw_front
-            if isinstance(i, dict) and "id" in i
-        }
-
-        def flatten_v16(key: str) -> Dict[str, Any]:
+        def flatten(key: str) -> Dict[str, Any]:
             return {
                 str(i.get("id")): i.get("value")
                 for i in data.get(key, [])
                 if isinstance(i, dict) and "id" in i
             }
 
+        front = flatten("frontdata")
+
         return {
-            "boiler_temp": self._safe_float(front_dict.get("boilertemp")),
-            "state": data.get("miscdata", {}).get("state", {}).get("value", "Unknown"),
+            "boiler_temp": self._safe_float(front.get("boilertemp")),
+            "state": data.get("miscdata", {}).get("state", {}).get("value"),
             "attributes": {
-                "front": front_dict,
-                "boiler_raw": flatten_v16("boilerdata"),
-                "dhw_raw": flatten_v16("dhwdata"),
-                "hopper_raw": flatten_v16("hopperdata"),
+                "front": front,
+                "boiler_raw": flatten("boilerdata"),
+                "dhw_raw": flatten("dhwdata"),
+                "hopper_raw": flatten("hopperdata"),
                 "misc": data.get("miscdata", {}),
             },
         }
 
-    def _safe_float(self, val: Any) -> float:
-        try:
-            return float(str(val).replace(",", "."))
-        except Exception:
-            return 0.0
-
-    async def get_consumption(self, query_string: str) -> List[Any]:
+    # ------------------------------------------------------------------
+    # STATS
+    # ------------------------------------------------------------------
+    async def get_consumption(self, query: str) -> List[Any]:
         if not self.token:
             return []
 
-        url = (
-            f"{self.BASE_URL}v16bckbeta/dataout2/getconsumption.php?"
-            f"{query_string}&token={self.token}"
-        )
+        url = f"{self.BASE_URL}getconsumption.php?{query}&token={self.token}"
 
         try:
-            async with self._session.get(url, headers=self._headers) as response:
-                data = await response.json(content_type=None)
+            async with self._session.get(url, headers=self._headers) as r:
+                data = await r.json(content_type=None)
                 return data if isinstance(data, list) else []
         except Exception:
             return []
 
+    # ------------------------------------------------------------------
+    # UTILS
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _safe_float(val: Any) -> float | None:
+        try:
+            return float(str(val).replace(",", "."))
+        except Exception:
+            return None
