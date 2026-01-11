@@ -132,11 +132,10 @@ class StokerCloudClientV16:
             return []
 
     async def set_param(self, read_key: str, value: float) -> bool:
-        """Wysyła polecenie zmiany z jawnym przekazaniem loginu/hasła (wymagane przez v16)."""
+        """Wysyła polecenie zmiany metodą POST (często wymagane przy zapisie w v16)."""
         if not self.token:
             await self._refresh_token()
         
-        # Mapa parametrów
         mapping = {
             "dhwwanted": ("hot_water", "hot_water.temp"),
             "-wantedboilertemp": ("boiler", "boiler.temp"),
@@ -145,8 +144,8 @@ class StokerCloudClientV16:
         menu, name = mapping.get(read_key, (read_key.split('.')[0], read_key))
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Kluczowa zmiana: dodajemy user i pass bezpośrednio do zapytania updatevalue
-        params = {
+        # Dane wysyłane w ciele zapytania (POST)
+        payload = {
             "menu": menu,
             "name": name,
             "token": self.token,
@@ -155,13 +154,16 @@ class StokerCloudClientV16:
             "pass": self.password
         }
         
-        _LOGGER.warning("WYSYŁAM ZAPIS (v16 Secure): %s=%s", name, value)
+        _LOGGER.warning("WYSYŁAM ZAPIS (POST v16): %s=%s", name, value)
         
         try:
-            async with self._session.get(url, params=params, headers=self._headers) as response:
+            # Zmiana z self._session.get na self._session.post
+            async with self._session.post(url, data=payload, headers=self._headers) as response:
                 res_text = await response.text()
-                _LOGGER.warning("ODPOWIEDŹ API NA ZAPIS: %s", res_text)
+                _LOGGER.warning("ODPOWIEDŹ API NA ZAPIS POST: %s", res_text)
+                
+                # Czasami v16 zwraca status:0 przy sukcesie lub po prostu tekst "OK"
                 return "OK" in res_text.upper() or '"status":"0"' in res_text
         except Exception as err:
-            _LOGGER.error("Błąd komunikacji przy zapisie: %s", err)
+            _LOGGER.error("Wyjątek podczas zapisu POST: %s", err)
             return False
