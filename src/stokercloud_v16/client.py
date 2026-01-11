@@ -108,22 +108,35 @@ class StokerCloudClientV16:
         menus: dict[str, Any] = {}
         for menu in self.MENU_SECTIONS:
             try:
+                if not self.token:
+                    await self._refresh_token()  # upewniamy się, że token jest ważny
                 async with async_timeout.timeout(10):
                     async with self._session.get(
                         f"{self.BASE_URL}getmenudata.php",
                         params={"menu": menu, "token": self.token},
                         headers=self._headers,
                     ) as resp:
-                        menu_list = await resp.json(content_type=None)
+                        try:
+                            menu_list = await resp.json(content_type=None)
+                        except Exception as parse_err:
+                            _LOGGER.error("Nie udało się sparsować JSON dla menu %s: %s", menu, parse_err)
+                            menu_list = []
+        
                         if isinstance(menu_list, list):
-                            menus[menu] = {str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
-                                           for i in menu_list if isinstance(i, dict) and "id" in i}
+                            if not menu_list:
+                                _LOGGER.debug("Menu %s jest puste", menu)
+                            menus[menu] = {
+                                str(i.get("id")): (i.get("value") if i.get("value") != "N/A" else None)
+                                for i in menu_list if isinstance(i, dict) and "id" in i
+                            }
                         else:
+                            _LOGGER.warning("Menu %s zwróciło nieoczekiwany format: %s", menu, type(menu_list))
                             menus[menu] = {}
+        
             except Exception as err:
-                _LOGGER.debug("Menu %s read error: %s", menu, err)
+                _LOGGER.error("Błąd pobrania menu %s: %s", menu, err)
                 menus[menu] = {}
-
+        
         data["menus"] = menus
         return data
 
