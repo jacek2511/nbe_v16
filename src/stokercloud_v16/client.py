@@ -130,7 +130,7 @@ class StokerCloudClientV16:
             await self._refresh_token()
 
         # Próbujemy adresu bez 'bckbeta', który jest aktualnym standardem v16
-        set_url = f"{self.BASE_URL}v16bckbeta/dataout2/setdata2.php"
+        set_url = f"{self.BASE_URL}v16/dataout2/setdata2.php"
         
         # Przygotowujemy dane do wysłania w formacie formularza (częste w PHP)
         post_data = {
