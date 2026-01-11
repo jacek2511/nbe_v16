@@ -24,7 +24,7 @@ class StokerCloudClientV16:
             "pass": self.password
         }
         
-        async with async_timeout.timeout(10):
+        async with async_timeout.timeout(20):
             async with self._session.get(login_url, params=params) as response:
                 data = await response.json(content_type=None)
                 self.token = data.get('token')
