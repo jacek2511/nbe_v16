@@ -18,20 +18,29 @@ class StokerCloudClientV16:
 
     async def _refresh_token(self):
         """Logowanie z użyciem hasła w celu uzyskania tokena."""
-        login_url = f"{self.BASE_URL}v2/dataout2/login.php"
-        params = {
-            "user": self.username,
-            "pass": self.password
-        }
+        login_url = "https://www.stokercloud.dk/v2/dataout2/login.php"
+        params = {"user": self.username, "pass": self.password}
         
-        async with async_timeout.timeout(20):
-            async with self._session.get(login_url, params=params) as response:
-                data = await response.json(content_type=None)
-                self.token = data.get('token')
-                if not self.token:
-                    _LOGGER.error("Błąd logowania: %s", data)
-                    raise Exception("Nieprawidłowy użytkownik lub hasło")
-
+        try:
+            async with async_timeout.timeout(15):
+                async with self._session.get(login_url, params=params) as response:
+                    if response.status != 200:
+                        raise Exception(f"Błąd HTTP: {response.status}")
+                    
+                    # Ważne: StokerCloud czasem zwraca tekst zamiast JSON przy błędach
+                    data = await response.json(content_type=None)
+                    self.token = data.get('token')
+                    
+                    if not self.token:
+                        _LOGGER.error("Błąd logowania StokerCloud: %s", data)
+                        raise Exception("Nieprawidłowy token w odpowiedzi")
+        except asyncio.TimeoutError:
+            _LOGGER.error("Timeout podczas logowania do StokerCloud")
+            raise
+        except Exception as err:
+            _LOGGER.error("Wyjątek podczas logowania: %s", err)
+            raise
+            
     async def fetch_data(self, retry=True) -> Dict[str, Any]:
         """Pobieranie danych z obsługą wygasłego tokena."""
         if not self.token:
