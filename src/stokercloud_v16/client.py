@@ -25,7 +25,7 @@ class StokerCloudClientV16:
 
     async def _refresh_token(self):
         """Logowanie z użyciem hasła w celu uzyskania tokena."""
-        login_url = f"{self.BASE_URL}v2/dataout2/login.php"
+        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
         params = {"user": self.username, "pass": self.password}
         
         try:
@@ -124,32 +124,36 @@ class StokerCloudClientV16:
             }
         }
 
-    async def set_param(self, item_id: str, value: float) -> bool:
-        """Wysyła zmianę parametru do kontrolera v16 za pomocą POST."""
+async def set_param(self, item_id: str, value: float) -> bool:
+        """Wysyła zmianę parametru zgodnie z odkrytym formatem v16 updatevalue.php."""
         if not self.token:
             await self._refresh_token()
 
-        # Próbujemy adresu bez 'bckbeta', który jest aktualnym standardem v16
-        set_url = f"{self.BASE_URL}v2/dataout2/setdata2.php"
+        # Ścieżka zidentyfikowana w logach
+        set_url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Przygotowujemy dane do wysłania w formacie formularza (częste w PHP)
-        post_data = {
-            "id": item_id,
-            "value": int(value),
-            "token": self.token
+        # Mapowanie technicznych ID na nazwy menu/name wymagane przez updatevalue.php
+        # Musimy to uzupełnić o brakujące parametry
+        mapping = {
+            "dhwwanted": {"menu": "hot_water.temp", "name": "hot_water.temp"},
+            "-wantedboilertemp": {"menu": "boiler.temp", "name": "boiler.temp"}, # Do sprawdzenia w logach przeglądarki dla kotła
+        }
+
+        param_config = mapping.get(item_id, {"menu": item_id, "name": item_id})
+
+        params = {
+            "menu": param_config["menu"],
+            "name": param_config["name"],
+            "token": self.token,
+            "value": int(value)
         }
 
         try:
             async with async_timeout.timeout(10):
-                # Zmieniamy .get na .post
-                async with self._session.post(set_url, data=post_data, headers=self._headers) as response:
-                    if response.status == 200:
-                        _LOGGER.info("Pomyślnie zmieniono parametr %s na %s", item_id, value)
-                        return True
-                    else:
-                        # Logujemy status, żeby wiedzieć czy to nadal 404 czy może 403 (brak dostępu)
-                        _LOGGER.error("Błąd serwera StokerCloud przy zapisie: %s", response.status)
-                        return False
+                # Z logów wynika, że to jest zapytanie GET
+                async with self._session.get(set_url, params=params, headers=self._headers) as response:
+                    _LOGGER.info("Próba zapisu: %s | Status: %s", response.url, response.status)
+                    return response.status == 200
         except Exception as err:
-            _LOGGER.error("Wyjątek podczas komunikacji z API (set_param): %s", err)
+            _LOGGER.error("Wyjątek podczas updatevalue: %s", err)
             return False
