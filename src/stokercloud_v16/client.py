@@ -22,8 +22,8 @@ class StokerCloudClientV16:
         }
 
     async def _refresh_token(self):
-        """Logowanie w celu uzyskania tokena."""
-        login_url = f"{self.BASE_URL}v2/dataout2/login.php"
+        """Logowanie w celu uzyskania tokena (v16 beta)."""
+        login_url = f"{self.BASE_URL}v16bckbeta/dataout2/login.php"
         params = {"user": self.username, "pass": self.password}
         
         try:
@@ -33,12 +33,13 @@ class StokerCloudClientV16:
                     self.token = data.get('token')
                     if not self.token:
                         raise Exception(f"Brak tokena w odpowiedzi: {data}")
+                    _LOGGER.debug("Pomyślnie odświeżono token sesji")
         except Exception as err:
-            _LOGGER.error("Błąd logowania: %s", err)
+            _LOGGER.error("Błąd logowania StokerCloud: %s", err)
             raise
 
     async def fetch_data(self, retry=True) -> Dict[str, Any]:
-        """Pobieranie danych bieżących."""
+        """Pobieranie danych bieżących z kontrolera."""
         if not self.token:
             await self._refresh_token()
 
@@ -63,52 +64,43 @@ class StokerCloudClientV16:
             _LOGGER.error("Błąd fetch_data: %s", err)
             raise
 
-    async def get_consumption(self, query: str) -> List[Any]:
-        """
-        Pobiera dane o zużyciu. 
-        query: np. 'days=2', 'months=12', 'years=2'
-        """
+    async def get_consumption(self, query_string: str) -> List[Any]:
+        """Pobiera statystyki zużycia (wymaga tokena w URL)."""
         if not self.token:
             await self._refresh_token()
 
-        # Endpoint statystyk v16
-        url = f"{self.BASE_URL}v16bckbeta/dataout2/getconsumption.php?{query}"
+        # Budujemy słownik parametrów z przekazanego stringa (np. 'days=2')
+        query_params = dict(q.split('=') for q in query_string.split('&'))
+        query_params["token"] = self.token
+
+        url = f"{self.BASE_URL}v16bckbeta/dataout2/getconsumption.php"
         
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, headers=self._headers) as response:
+                async with self._session.get(url, params=query_params, headers=self._headers) as response:
                     if response.status == 200:
                         return await response.json(content_type=None)
+                    _LOGGER.warning("get_consumption zwrócił status: %s", response.status)
                     return []
         except Exception as err:
-            _LOGGER.error("Błąd pobierania statystyk (%s): %s", query, err)
+            _LOGGER.error("Błąd pobierania statystyk (%s): %s", query_string, err)
             return []
 
     async def set_param(self, item_id: str, value: float) -> bool:
-        """Wysyła zmianę parametru zgodnie z logiką menu v16."""
+        """Wysyła zmianę parametru (updatevalue.php)."""
         if not self.token:
             await self._refresh_token()
 
         set_url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # 1. Mapowanie prefiksów na nazwy menu w API
-        # v16 wymaga specyficznych nazw menu dla konkretnych prefiksów UDP
+        # Mapowanie techniczne dla v16
         menu_mapping = {
-            "boiler": "boiler",
-            "hot_water": "hotwater",
-            "regulation": "regulation",
-            "auger": "hopper",
-            "hopper": "hopper",
-            "weather": "weather",
-            "cleaning": "cleaning",
-            "fan": "fan",
-            "oxygen": "oxygen",
-            "ignition": "igniter",
-            "pump": "pump",
-            "sun": "sun"
+            "boiler": "boiler", "hot_water": "hotwater", "regulation": "regulation",
+            "auger": "hopper", "hopper": "hopper", "weather": "weather",
+            "cleaning": "cleaning", "fan": "fan", "oxygen": "oxygen",
+            "ignition": "igniter", "pump": "pump", "sun": "sun"
         }
 
-        # 2. Specjalne przypadki dla temperatury zadanej (z frontu na menu techniczne)
         special_cases = {
             "dhwwanted": ("hotwater", "hot_water.temp"),
             "-wantedboilertemp": ("boiler", "boiler.temp"),
@@ -119,7 +111,6 @@ class StokerCloudClientV16:
         if item_id in special_cases:
             menu, name = special_cases[item_id]
         else:
-            # Rozdzielamy prefix (np. 'fan.speed_10' -> prefix 'fan')
             prefix = item_id.split('.')[0] if '.' in item_id else item_id
             menu = menu_mapping.get(prefix, prefix)
             name = item_id
@@ -134,7 +125,7 @@ class StokerCloudClientV16:
         try:
             async with async_timeout.timeout(10):
                 async with self._session.get(set_url, params=params, headers=self._headers) as response:
-                    _LOGGER.info("Set Param: %s -> %s (Menu: %s, Status: %s)", name, value, menu, response.status)
+                    _LOGGER.info("Zmiana parametru: %s na %s (Status: %s)", name, value, response.status)
                     return response.status == 200
         except Exception as err:
             _LOGGER.error("Błąd zapisu parametru %s: %s", item_id, err)
@@ -152,7 +143,6 @@ class StokerCloudClientV16:
 
         if val is not None:
             try:
-                # v16 czasem zwraca liczby jako stringi z przecinkiem lub kropką
                 clean_val = str(val).replace(',', '.')
                 return float(clean_val) if clean_val not in ["None", "N/A", ""] else None
             except ValueError:
