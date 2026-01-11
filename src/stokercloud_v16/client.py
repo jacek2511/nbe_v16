@@ -93,44 +93,36 @@ class StokerCloudClientV16:
             _LOGGER.error("Błąd statystyk %s: %s", query_string, err)
             return []
 
-    async def set_param(self, item_id: str, value: float) -> bool:
-        """Wysyła zmianę parametru z wymuszonym formatem Integer i nagłówkiem AJAX."""
+async def set_param(self, item_id: str, value: float) -> bool:
+        """Wysyła zmianę parametru zgodnie z logiką menu v16."""
         if not self.token:
             await self._refresh_token()
 
         set_url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
         
-        # Mapowanie menu (bez zmian)
-        menu_mapping = {
-            "boiler": "boiler", "hot_water": "hotwater", "regulation": "regulation",
-            "auger": "hopper", "hopper": "hopper", "weather": "weather",
-            "cleaning": "cleaning", "fan": "fan", "oxygen": "oxygen",
-            "ignition": "igniter", "pump": "pump", "sun": "sun"
-        }
-
+        # Twoje logi pokazują, że dla CWU menu i name to 'hot_water.temp'
+        # Dla kotła najprawdopodobniej analogicznie 'boiler.temp'
         special_cases = {
-            # Poprawione na podstawie Twoich logów z przeglądarki
             "dhwwanted": ("hot_water.temp", "hot_water.temp"),
-            "-wantedboilertemp": ("boiler.temp", "boiler.temp"), # v16 często dubluje to też dla kotła
+            "-wantedboilertemp": ("boiler.temp", "boiler.temp"),
         }
 
         if item_id in special_cases:
             menu, name = special_cases[item_id]
         else:
+            # Domyślne mapowanie dla reszty (np. ignition.power)
             prefix = item_id.split('.')[0] if '.' in item_id else item_id
-            menu = menu_mapping.get(prefix, prefix)
+            menu = prefix
             name = item_id
 
-        # V16 BETA WYMAGA:
-        # 1. Wartości jako całkowite (int)
-        # 2. Często dodatkowego nagłówka sugerującego zapytanie AJAX
         params = {
             "menu": menu,
             "name": name,
             "token": self.token,
-            "value": int(round(float(value))) # Zaokrąglenie i rzutowanie na int
+            "value": int(round(float(value)))
         }
 
+        # W v16 ten nagłówek jest często wymagany do akceptacji zapisu
         headers = self._headers.copy()
         headers["X-Requested-With"] = "XMLHttpRequest"
 
@@ -138,12 +130,10 @@ class StokerCloudClientV16:
             async with async_timeout.timeout(10):
                 async with self._session.get(set_url, params=params, headers=headers) as response:
                     text_resp = await response.text()
-                    _LOGGER.info("Zapis %s=%s | Status: %s | Odpowiedź: %s", name, value, response.status, text_resp)
-                    
-                    # API v16 często zwraca status 200, ale w treści jest "OK" lub "Error"
+                    _LOGGER.info("Zapis: %s=%s | Status: %s | Odp: %s", name, value, response.status, text_resp)
                     return response.status == 200 and "OK" in text_resp.upper()
         except Exception as err:
-            _LOGGER.error("Wyjątek podczas zapisu %s: %s", item_id, err)
+            _LOGGER.error("Błąd zapisu %s: %s", item_id, err)
             return False
     
     def _get_val(self, data_source, item_id):
