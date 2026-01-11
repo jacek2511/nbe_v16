@@ -130,8 +130,9 @@ class StokerCloudClientV16:
 
     async def set_param(self, param: str, value: float) -> bool:
         """
-        Działający zapis do StokerCloud v16
-        – zgodny z ruchem z przeglądarki
+        FINALNA, działająca wersja zapisu StokerCloud v16
+        – zgodna z ruchem z przeglądarki
+        – z wymuszoną autoryzacją user/pass
         """
     
         if not self.token:
@@ -141,10 +142,14 @@ class StokerCloudClientV16:
         url = f"{self.BASE_URL}v16bckbeta/dataout2/updatevalue.php"
     
         params = {
-            "menu": param,          # np. hot_water.temp
-            "name": param,          # IDENTYCZNE
+            "menu": param,          # MUSI być np. hot_water.temp
+            "name": param,
             "value": int(round(value)),
-            "token": self.token
+            "token": self.token,
+    
+            # 🔴 KLUCZOWE – bez tego backend odrzuca zapis
+            "user": self.username,
+            "pass": self.password
         }
     
         headers = self._headers.copy()
@@ -159,13 +164,13 @@ class StokerCloudClientV16:
         try:
             async with self._session.get(url, params=params, headers=headers) as resp:
                 text = await resp.text()
+    
                 _LOGGER.warning("ODPOWIEDŹ: %s | %s", resp.status, text)
     
-                # v16 często zwraca pustą odpowiedź albo OK
                 if resp.status == 200 and (
-                    text.strip() == ""
-                    or "OK" in text.upper()
+                    '"status":"0"' in text
                     or '"status":0' in text
+                    or "OK" in text.upper()
                 ):
                     _LOGGER.warning("✅ ZAPIS POWIÓDŁ SIĘ")
                     return True
@@ -177,3 +182,4 @@ class StokerCloudClientV16:
             _LOGGER.error("Błąd zapisu: %s", err)
             return False
     
+        
