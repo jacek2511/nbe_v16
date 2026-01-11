@@ -16,21 +16,6 @@ class StokerCloudClientV16:
         "external", "weather", "manual", "timer"
     ]
 
-    WRITE_KEY_MAP = {
-        # CWU
-        "dhwwanted": "hot_water.temp",
-    
-        # KOCIOŁ
-        "-wantedboilertemp": "boiler.temp",
-    
-        # REGULACJA
-        "regulation.max_power": "regulation.max_power",  # UWAGA: tylko jeśli UI faktycznie zapisuje
-        "regulation.min_power": "regulation.min_power",
-    
-        # ZAPŁON
-        "ignition.pellets": "igniter.pellets",
-    }
-    
     def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
         self.username = username
         self.password = password
