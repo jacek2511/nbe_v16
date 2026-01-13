@@ -22,7 +22,7 @@ class StokerCloudClientV16:
         self.token: str | None = None
 
         self.screen_params = (
-            "b1,4,b2,5,b3,17,b4,25,b5,12,b6,14,b7,15,b8,16,b9,26,b10,9,"
+            "b1,4,b2,5,b3,17,b4,7,b5,12,b6,14,b7,15,b8,16,b9,26,b10,9,"
             "d1,3,d2,4,d3,4,d4,4,d5,0,d6,0,d7,0,d8,0,d9,0,d10,0,"
             "h1,2,h2,3,h3,4,h4,7,h5,8,h6,1,h7,5,h8,13,h9,9,h10,10,"
             "w1,2,w2,3,w3,9,w4,4,w5,13"
