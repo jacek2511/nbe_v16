@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stokercloud_v16"
-version = "1.1.0"
+version = "1.1.1"
 description = "Asynchronous Python client for NBE StokerCloud v16 API"
 readme = "README.md"
 authors = [
