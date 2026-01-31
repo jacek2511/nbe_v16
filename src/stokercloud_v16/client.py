@@ -145,6 +145,7 @@ class StokerCloudClientV16:
             "frontdata": normalize_list("frontdata"),
             "miscdata": raw_main.get("miscdata", {}),
             "leftoutput": raw_main.get("leftoutput", {}),
+            "weathercomp": raw_main.get("weathercomp", {}),
             "rightoutput": raw_main.get("rightoutput", {}),
             "infomessages": raw_main.get("infomessages", []),
             "model": raw_main.get("model"),
