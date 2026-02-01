@@ -12,7 +12,8 @@ class StokerCloudClientV16:
     MENU_SECTIONS = [
         "boiler", "hot_water", "regulation", "igniter",
         "fan", "auger", "oxygen", "cleaning", "hopper",
-        "external", "weather", "manual", "timer"
+        "external", "weather", "weather1", "weather2",
+        "weather3", "manual", "timer"
     ]
 
     def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
